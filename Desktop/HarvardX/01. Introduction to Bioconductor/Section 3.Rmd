@@ -1,0 +1,729 @@
+---
+title: "Section 3: Management of genome-scale data with Bioconductor"
+author: "Haeun Lee"
+output: html_document
+date: "2026-12-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+BiocManager::install(c("Biobase",
+                       "GEOquery",
+                       "genomicsclass/GSE5859Subset",
+                       "affy",
+                       "hgu95acdf",
+                       "genefilter",
+                       "parathyroidSE",
+                       "airway",
+                       "pasillaBamSubset",
+                       "Rsamtools",
+                       "GenomicAlignments",
+                       "ArrayExpress",
+                       "NGScopyData",
+                       "AnnotationDbi"))
+```
+
+# Organizing microarray data with ExpressionSet
+## The ExpressionSet class
+```{r}
+library(Biobase)
+library(GEOquery)
+
+geoq <- getGEO("GSE9514")    # download a microarray dataset from GEO
+names(geoq)    
+e <- geoq[[1]]    # extract ExpressionSet
+e
+
+# exprs gives matrix of microarray values
+dim(e)    # number of features and samples in ExpressionSet
+ncol(e)
+nrow(e)
+
+exprs(e)[1:3,1:3]
+head(exprs(e))[,1]    # first column
+exprs(e)[1,]    # first row
+exprs(e)["10000_at",]    # can also index by name
+rownames(e)[1]    # row names are probe sets
+dim(exprs(e))    # rows are features, columns are samples
+
+# pData gives phenotype data (sample information)
+pData(e)[1:3,1:6]
+names(pData(e))
+pData(e)$characteristics_ch1    # column in GEO to describe experimental state/condition
+as.numeric(factor(pData(e)$characteristics_ch1))    # help see replicates of each state
+dim(pData(e))    # rows of pData correspond to columns of exprs
+dim(e)
+
+# fData gives feature data (probe information)
+fData(e)[1:3,1:3]
+dim(fData(e))    # rows of fData correspond to rows of exprs
+names(fData(e))
+head(fData(e)$"Gene Symbol")
+head(rownames(e))
+
+# additional annotation tied to ExpressionSet
+experimentData(e)
+annotation(e)
+```
+
+### Assessment
+```{r}
+library(GSE5859Subset)
+data(GSE5859Subset)
+dim(geneExpression) # assayData
+dim(sampleInfo) # phenoData
+dim(geneAnnotation) # featureData
+
+# rows sampleInfo = columns geneExpression
+  # rownames() of phenoData = colnames() of assayData
+# rows geneAnnotation = rows geneExpression
+  # rownames() of featureData = rownames() of assayData
+identical(colnames(geneExpression), sampleInfo$filename)
+identical(rownames(geneExpression), geneAnnotation$PROBEID)
+
+pd <- AnnotatedDataFrame(sampleInfo)
+rownames(pd) <- pd$filename
+pd <- pd[, varLabels(pd) != "filename"] ## redundant
+
+pData(pd)["GSM136530.CEL.gz", "date"]
+varLabels(pd)
+
+fd <- AnnotatedDataFrame(geneAnnotation)
+rownames(fd) <- fd$PROBEID
+fd <- fd[, varLabels(fd) != "PROBEID"] ## redundant
+pData(fd)["204810_s_at", "CHR"]
+
+eset <- ExpressionSet(geneExpression,pd,fd)
+eset
+
+ind1 <- which(featureData(eset)$CHR == "chrY")
+ind2 <- pData(eset)$group == 1
+femaleY <- colMeans(exprs(eset)[ind1, ind2]) 
+maleY <- colMeans(exprs(eset)[ind1, !ind2]) 
+boxplot(maleY, femaleY)
+median(maleY) - median(femaleY)
+
+dim(exprs(eset))
+dim(pData(eset))
+dim(fData(eset))
+
+annotation(eset) <- "hgfocus"
+
+eset[1:10, 1:5] # first 10 feature and first 5 samples
+```
+
+## Reading microarray raw data: single-color arrays
+```{r}
+library(affy)
+library(here)
+
+# base directory
+basedir <- here("rawdata-master", "celfiles")
+
+# read sample info
+tab_file <- file.path(basedir, "sampleinfo.txt")
+tab <- read.delim(tab_file, check.names=FALSE, as.is=TRUE)
+rownames(tab) <- tab$filenames
+
+# Read and process Affy batch with full paths
+ab <- ReadAffy(filenames = file.path(basedir, tab$filenames), phenoData = tab)
+
+# inspect dimensions
+dim(pm(ab))    # probe-level data; pm: perfect match probe-level intensity, experimental data
+dim(pData(ab)) # sample-level metadata
+
+rownames(ab)[1:10]
+colnames(pm(ab))
+annotation(ab)
+
+# preprocess to gene-level using RMA (probe-level -> gene-level data)
+e <- rma(ab)
+
+# OR one-step processing (read and process data to gene-level)
+ejust <- justRMA(filenames = tab$filenames, phenoData = tab,
+                 celfile.path = basedir)
+dim(ejust)
+```
+
+## Reading microarray raw data: Agilent two-color arrays
+```{r}
+ # datadir defined in previous video
+library(limma)
+library(rafalib)
+
+# base directory relative to project root
+basedir <- here("rawdata-master", "agilent")
+
+# full path to the target file
+target_file <- file.path(basedir, "TargetBeta7.txt")
+
+# read targets safely
+targets <- readTargets(target_file)
+
+# source: which imaging software was used to produce file
+# read Red/Green intensities
+RG <- read.maimages(targets$FileName, source="genepix", path=basedir)
+
+# M: log ration, A: Average of log
+# transformed
+MA <- MA.RG(RG,bc.method="none")
+
+# dimensions
+dim(RG$R)
+dim(RG$G)
+dim(MA$M)
+dim(MA$A)
+
+# MA plot for first sample
+plot(MA$A[,1], MA$M[,1])
+
+# microarray image
+mypar(1,1)
+imageplot(MA$M[,2], RG$printer, zlim=c(-3,3))
+dev.off()
+```
+
+### Assessment
+```{r}
+# Q1
+library(hgu95acdf)
+
+# set base directory (absolute path; change if needed)
+basedir <- "/Users/iha-eun/Desktop/HarvardX/01. Introduction to Bioconductor/rawdata-master/celfiles"
+
+# read sample info
+tab <- read.delim(file.path(basedir, "sampleinfo.txt"),
+                  check.names = FALSE, as.is = TRUE)
+
+rownames(tab) <- tab$filenames
+tab["1521a99hpp_av06.CEL.gz","36311_at"]
+
+# Q2
+ab <- ReadAffy(filenames = file.path(basedir, tab[,1]), phenoData=tab)
+feature.ID <- probeNames(ab) # extract feature ID
+sum(feature.ID == "36311_at")
+
+# probes are often used for each gene (feature)
+length(featureNames(ab)) # number of genes
+length(probeNames(ab)) #  number of probes
+
+# Q3
+# ab_sub <- ab[c("1532a99hpp_av04.CEL.gz","1532b99hpp_av04.CEL.gz")]
+# mat <- pData(ab_sub)[,"36085_at"]
+
+# Explanation
+## identify columns w/ samples of interest
+samps <- c("1532a99hpp_av04.CEL.gz", "1532b99hpp_av04.CEL.gz")
+ind <- which(colnames(ab) %in% samps)
+ab[, ind]
+ab_subb <- ab[, ind]
+
+## extract probe intensities for probe set of interest
+pid <- "36085_at"
+# pm() get the data from assayData
+matt <- pm(ab_subb)[probeNames(ab_subb) == pid, ] # pm; extracts the perfect match intensities
+
+## determine expected concentrations
+# pData() get info from PhenoData
+conc <- pData(ab)[ind, pid]
+
+## compute probe-level log2 fold changes
+lfc <- log2(matt[, 2] / matt[, 1])
+
+## make the plots
+boxplot(lfc, ylim = c(-0.5, 1.5))
+abline(h = log2(conc[2] / conc[1]), lty = 2, col = 'blue') #intended log fold
+abline(h = 0)
+```
+
+# Organizing NGS data with SummarizedExperment
+## The SummarizedExperiment class
+```{r}
+library(parathyroidSE)
+data(parathyroidGenesSE)
+se <- parathyroidGenesSE
+se
+
+# assay contains results of the assay
+dim(se)
+assay(se)[1:3,1:3]
+dim(assay(se))    # rows = features (ranges), columns = samples
+
+# colData contains sample information (e.g. gene or transcript IDs, etc.)
+colData(se)[1:3,1:6]
+dim(colData(se))
+names(colData(se))
+colData(se)$treatment
+as.numeric(colData(se)$treatment)
+
+# rowRanges contains feature information (e.g. genes, transcripts, exons, etc.)
+# genomic ranges of interest
+rowRanges(se)[1]
+class(rowRanges(se))
+length(rowRanges(se))    # number of genes
+length(rowRanges(se)[[1]])    # number of exons for first gene
+head(rownames(se))
+metadata(rowRanges(se)) # how this GRanges list was constructed
+
+# additional metadata, including sample information
+metadata(se)$MIAME # MIAME; Minimal Information About Microarray Experiment
+abstract(metadata(se)$MIAME)
+```
+
+## Assessment
+```{r}
+library(airway)
+data(airway)
+airway    # SummarizedExperiment object
+
+metadata(airway)
+length(rowRanges(airway))
+nrow(airway)
+length(colData(se))
+ncol(airway)
+
+which(colData(airway)$Run == "SRR1039509")
+colData(airway)$cell[2]
+colData(airway)["SRR1039509", "cell"]    # inspect column names to figure out which refers to cell line: "cell"
+
+names(colData(airway))    # look for name related to dexamethasone: "dex"
+
+mean(assay(airway)[,1])
+mean(assay(airway)[,2])
+mean(assay(airway)[,3])
+mean(assay(airway)[,4])
+mean(assay(airway)[,5])
+mean(assay(airway)[,6])
+mean(assay(airway)[,7])
+mean(assay(airway)[,8])
+rownames(colData(airway))[which.min(colData(airway)$avgLength)]    # look for column name related to read length: avgLength
+
+dim(assay(airway))
+length(rowRanges(airway)) # number of gene
+rowRanges(airway)[100]
+length(rowRanges(airway)[[100]]) # number of exon in 100th gene
+seqnames(rowRanges(airway)[[100]])
+range(rowRanges(airway)[[100]])
+width(range(rowRanges(airway)[[100]]))
+tss = resize(range(rowRanges(airway)[[100]]),1)
+tss
+
+ENSG <- airway["ENSG00000103196"]
+mean(ENSG@assays@data@listData[["counts"]])
+mean(assay(airway)["ENSG00000103196", ])
+
+trt.mean <- mean(ENSG@assays@data@listData[["counts"]][which(colData(airway)$dex == "trt")])
+trt <- mean(assay(airway)["ENSG00000103196", which(colData(airway)$dex == "trt")])
+untrt.mean <- mean(ENSG@assays@data@listData[["counts"]][which(colData(airway)$dex == "untrt")])
+untrt <- mean(assay(airway)["ENSG00000103196", which(colData(airway)$dex == "untrt")])
+log2(trt.mean/untrt.mean)
+```
+
+# Importing NGS data in R
+```{r}
+# How to import NGS data using Rsamtools
+library(pasillaBamSubset)
+library(Rsamtools)
+filename <- untreated1_chr4()
+
+bf <- BamFile(filename)
+
+seqinfo(bf)
+sl <- seqlengths(bf)
+
+quickBamFlagSummary(bf)
+
+# Specifying: what and which
+## what - what kind of information to extract?
+## which - which ranges of alignments to extract?
+
+gr <- GRanges("chr4", IRanges(1, sl["chr4"]))
+countBam(bf, param = ScanBamParam(which = gr))
+
+reads <- scanBam(BamFile(filename, yieldSize = 5))
+
+# Examining the output of scanBam
+class(reads)
+names(reads[[1]])
+reads[[1]]$pos    # the aligned start position
+reads[[1]]$rname    # the chromosome
+reads[[1]]$strand    # the strand
+reads[[1]]$qwidth    # the width of the read
+reads[[1]]$seq    # the sequence of the read
+
+gr <- GRanges("chr4", IRanges(500000, 700000))
+reads <- scanBam(bf, param = ScanBamParam(what = c("pos","strand"), which = gr))
+
+# The GenomicAlignments package
+library(GenomicAlignments)
+ga <- readGAlignments(bf)
+length(ga)
+
+granges(ga[1])
+
+gr <- GRanges("chr4", IRanges(700000, 800000))
+(fo <- findOverlaps(ga, gr))    # which reads over this range
+countOverlaps(gr, ga)    # count overlaps of range with the reads
+table(ga %over% gr)    # logical vector of read overlaps with the range
+```
+
+### Assessment
+```{r}
+# pasillaBamSubset; BAM file containing a subset of the reads from a single-end RNA-seq experiment in Drosophila melanogaster (fruit fly), aligning to chromosome 4
+library(pasillaBamSubset)
+library(Rsamtools)
+filename <- untreated1_chr4()
+bf <- BamFile(untreated1_chr4())
+
+gr <- GRanges("chr4",IRanges(440000, 470000))
+countBam(bf, param=ScanBamParam(which = gr))
+# or, alternatively:
+reads <- scanBam(bf, param = ScanBamParam(what = "pos", which = gr))
+length(reads[[1]]$pos)
+
+GC <- scanBam(bf, param=ScanBamParam(what = "seq", which = gr))
+GC.prop <- letterFrequency(GC[["chr4:440000-470000"]][["seq"]],"CG") / GC[["chr4:440000-470000"]][["seq"]]@ranges@width
+mean(GC.prop)
+# or, alternatively:
+mean(letterFrequency(GC[[1]]$seq, "GC", as.prob=TRUE))
+
+library(GenomicAlignments)
+ga <- readGAlignments(BamFile(filename))
+
+# "spiky" look of this histogram = genes are spread out on the chromosome, some genes have much higher gene expression
+hist(start(ga), breaks=100)
+
+BiocManager::install("TxDb.Dmelanogaster.UCSC.dm3.ensGene")
+library(TxDb.Dmelanogaster.UCSC.dm3.ensGene)
+g <- genes(TxDb.Dmelanogaster.UCSC.dm3.ensGene)    # GRanges corresponding to genes
+
+g2 <- g[g %over% GRanges("chr4", IRanges(200000, 300000))]
+countOverlaps(g2["FBgn0039890"],ga)
+
+```
+
+## Creating a count table from a BAM file
+
+Count sequence reads
+Count matrix
+- Row: Genomic ranges (~ featureData in ExpressionSet)
+- Column: Samples (~ phenoData in ExpressionSet)
+```{r}
+# libraries with BAM files and annotation
+library(pasillaBamSubset)
+library(TxDb.Dmelanogaster.UCSC.dm3.ensGene)
+txdb <- TxDb.Dmelanogaster.UCSC.dm3.ensGene # txdb; transcript databases
+
+# counting matrix
+grl <- exonsBy(txdb, by="gene")    # make GRangesList of exons for each gene
+grl[100]    # GRangesList of exons for 100th gene
+grl[[100]]    # GRanges with exons of 100th gene
+grl[[100]][1]    # first exon of 100th gene
+
+# paths to BAM files
+fl1 <- untreated1_chr4()
+fl2 <- untreated3_chr4()
+
+# libraries for importing BAM files
+library(Rsamtools)
+library(GenomicRanges)
+library(GenomicAlignments)
+
+# specify files with BamFileList
+fls <- BamFileList(c(fl1, fl2))
+names(fls) <- c("first","second")
+
+# find reads that overlap exons
+# count the reads (fls) which falls into features (grl)
+so1 <- summarizeOverlaps(features=grl,
+                         reads=fls,
+                         ignore.strand=TRUE)
+so1 # class: RangedSummarizedExperiment, count matrix available @assay
+
+# examine count matrix
+head(assay(so1))
+colSums(assay(so1))
+
+# examine rest of SummarizedExperiment components
+rowRanges(so1) # features, genes
+colData(so1) # sample
+colData(so1)$sample <- c("one","two")    # add sample information
+colData(so1)
+metadata(rowRanges(so1)) 
+
+# exploratory data analysis of counts
+x <- assay(so1)[,1]
+hist(x[x > 0], col="grey")
+hist(x[x > 0 & x < 10000], col="grey")
+plot(assay(so1) + 1, log="xy") # 2 samples are highly correlated, if one sample has high counts, other also does
+
+# count second file as paired-end reads
+# ?untreated3_chr4
+# ?summarizeOverlaps
+fls <- BamFileList(fl2)
+so2 <- summarizeOverlaps(features=grl,
+                         reads=fls,
+                         ignore.strand=TRUE,
+                         singleEnd=FALSE, 
+                         fragments=TRUE) # if only one from paired reads maps, also count
+colSums(assay(so2)) # paired reads counted once
+colSums(assay(so1)) # paired reads counted twice (total count doubled)
+
+# show there are half as many reads in so2 as so1
+plot(assay(so1)[,2], assay(so2)[,1], xlim=c(0,5000), ylim=c(0,5000),
+     xlab="single end counting", ylab="paired end counting")
+abline(0,1)
+abline(0,.5)
+```
+
+### Assessment
+```{r}
+library(pasillaBamSubset)
+library(TxDb.Dmelanogaster.UCSC.dm3.ensGene)
+txdb <- TxDb.Dmelanogaster.UCSC.dm3.ensGene
+
+# "FB..." = gene name
+g <- genes(txdb)
+g <- g[seqnames(g) == "chr4"]
+
+# Create the GRangesList of exons by gene
+# subset to the same genes as in g
+grl <- exonsBy(txdb, by="gene")
+grl <- grl[names(g)]
+
+all.equal(names(g), names(grl))
+
+library(Rsamtools)
+bf <- BamFile(untreated1_chr4())
+
+# reads which fall in introns may not be from the fully mature mRNA
+so1 <- summarizeOverlaps(g, bf, ignore.strand=TRUE)
+# GRangesList feature set (so2) gives a lower count value
+# because this method of counting does not include reads which fall in introns
+so2 <- summarizeOverlaps(grl, bf, ignore.strand=TRUE)
+
+colSums(assay(so1)) # include introns, higher count
+colSums(assay(so2)) # exon only
+
+zero.index = which(so1@assays@data@listData[["counts"]] == "0")
+so1 <- so1[-zero.index,]
+so2 <- so2[-zero.index,]
+
+x <- assay(so1)[,1]
+y <- assay(so2)[,1]
+par(mfrow=c(2,1))
+hist(x[x > 0 & x < 5000], col="blue")
+hist(y[y > 0 & y < 5000], col="red")
+
+plot(assay(so1)[,1], assay(so2)[,1], xlim=c(0,5000), ylim=c(0,5000),
+     xlab="GRanges object", ylab="GRangesList object")
+abline(0,0)
+abline(0,1)
+
+mean(so2@assays@data@listData[["counts"]]/so1@assays@data@listData[["counts"]])
+
+#OR
+g.so <- summarizeOverlaps(g, bf, ignore.strand = TRUE)
+grl.so <- summarizeOverlaps(grl, bf, ignore.strand = TRUE)
+
+# this generates a warning about applying log to 0s
+plot(assay(g.so), assay(grl.so), log = "xy")
+abline(0, 1)
+
+# adding a pseudocount prevents warnings for 0s
+plot(assay(g.so) + 1, assay(grl.so) + 1, log = "xy")
+abline(0, 1)
+
+ratio <- assay(grl.so) / assay(g.so)
+mean(ratio[assay(g.so) > 0])
+
+# scales each column of the count table such that we get the number of reads expected if the sample were sequenced to have 1 million reads mapping to genes on chromosome 4
+# reads per million (RPM) OR fragments per million (FPM)
+assay(grl.so)/sum(assay(grl.so))*1e6
+
+# OR
+count <- assay(grl.so)
+# here, we can just use sum() because there is only one column
+# otherwise we would use: sweep(count, 2, colSums(count), "/")
+fpm <- (count / sum(count)) * 1e6
+fpm[1]
+
+library(data.table)
+grl.names <- grl@partitioning@NAMES
+unlist <- unlist(grl)
+split <- split(grl,grl.names)
+
+# Assuming 'simplelist' is your SimpleList of GRangesList objects
+# Define a function or use an anonymous function to process each GRangesList
+process_grl <- function(grl_element) {
+  # Inside this function, 'grl_element' is a single GRangesList
+  # You can now operate on this GRangesList, for example, unlist it
+  # or apply further GRangesList-specific operations.
+  return(width(reduce(grl_element))) # Example operation: convert each GRangesList to a single GRanges object
+}
+
+grl.sub <- lapply(split,process_grl)
+sum(grl.sub$FBgn0002521)
+
+# FPKM, the number of fragments per kilobase of exonic basepairs, per million mapped reads
+# FPM / number of basepairs in the exons of each gene * 1000
+4.275607e+03/2399*1000
+
+# OR
+ebp <- sum(width(reduce(grl)))
+count <- assay(grl.so)
+fpm <- (count / sum(count)) * 1e6
+fpkm <- (fpm / ebp) * 1e3
+fpkm[1]
+```
+Note that there are more robust ways of estimating FPM and FPKM. For example, using a more robust estimate of the sequencing depth, and taking into account multiple transcript isoforms, which might be expressed at different levels. Here, we have demonstrated the simplest kind of sequencing depth and gene length normalization introduced for RNA-seq analysis.
+
+# Public data repositories
+## GEOquery: accessing 1000s of microarray experiments at NCBI
+```{r}
+library(GEOquery)
+glioMA = getGEO("GSE78703")[[1]]
+glioMA
+
+names(pData(glioMA))    # variable names
+glioMA$molecule_ch1    # molecule being assayed (RNA)
+table(glioMA$`treated with:ch1`, glioMA$`cell type:ch1`)    # experimental variables
+```
+
+## Array-oriented annotation
+```{r}
+#GPL: different platforms are listed
+library(hgu133plus2.db)
+hgu133plus2.db
+
+#library(hgu133plus2probe)
+#head(hgu133plus2probe)
+#dim(hgu133plus2probe)
+
+# PROBID = probe set information
+# 1 probe set contains several 25mers
+# Map: cytoband
+select(hgu133plus2.db, keytype="PROBEID", 
+       columns=c("SYMBOL", "GENENAME", "PATH", "MAP"), keys="1007_s_at")
+```
+
+### Assessment
+```{r}
+columns(hgu133plus2.db)
+EGFR <- select(hgu133plus2.db, keytype="SYMBOL", 
+       columns="PROBEID", keys="EGFR")
+unique(EGFR$PROBEID)
+# OR
+nrow(select(hgu133plus2.db, keys="EGFR", columns="PROBEID", keytype="SYMBOL"))
+
+library(GO.db)
+columns(GO.db)
+
+select(GO.db, keys="glial cell proliferation", columns=c("DEFINITION","GOID","ONTOLOGY","TERM"), keytype="TERM")
+
+select(hgu133plus2.db,keytype="GO",keys="GO:0014009",columns="PROBEID")
+
+key = select(GO.db, keys="glial cell proliferation", keytype="TERM", columns="GOID")$GOID
+nrow(select(hgu133plus2.db, keys=key, columns=c("PROBEID", "SYMBOL"), keytype="GO"))
+
+```
+
+# Verified assessment
+```{r}
+library(GEOquery)
+library(NGScopyData)
+library(Rsamtools)
+library(GenomicAlignments)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(AnnotationDbi)
+```
+
+```{r}
+lstem <- getGEO("GSE3725")[[1]]
+
+ncol(lstem)
+nrow(lstem)
+
+lstem <- lstem[, !grepl("^GMP expressing", pData(lstem)$title)]
+titles <- as.character(pData(lstem)$title)
+cell_type <- gsub(".*\\((.*?)( enriched)?\\).*", "\\1", titles)
+
+# add cell_type column to pData
+pData(lstem)$cell_type <- factor(cell_type)
+
+sum(pData(lstem)$cell_type == "L-GMP")
+
+index = which(fData(lstem)$ID == "1421579_at")
+fData(lstem)$"Gene Symbol"[index]
+# fData(lstem["1421579_at",])$"Gene Symbol"
+
+mean(exprs(lstem)["1421579_at",])
+# mean(exprs(lstem["1421579_at",]))
+
+lstem.L.GMP <- lstem[,pData(lstem)$cell_type == "L-GMP"]
+mean(exprs(lstem.L.GMP)["1421579_at",])
+# mean(exprs(lstem["1421579_at", pData(lstem)$cell_type == "L-GMP"]))
+
+```
+
+```{r}
+library(NGScopyData)
+tps_27 <- tps_27.chr6()$bamFpath    # path to BAM file
+
+gr <- GRanges("chr6",IRanges(260000, 360000))
+bf <- BamFile(tps_27)
+reads <- scanBam(bf, param = ScanBamParam(what = c("pos","strand"), which = gr))[[1]]
+
+sum(reads$strand == "+") / length(reads$strand)
+
+hist(reads$pos)
+
+library(GenomicAlignments)
+ga <- readGAlignments(bf)
+length(ga)
+# seqnames(x): Get or set the name of the reference sequence for each alignment
+# strand(x):  Get or set the strand for each alignment
+# qwidth(x): (i.e. the length of the query sequence that is stored in the corresponding SAM/BAM record)
+
+mean(qwidth(ga))
+hist(ga@start)
+
+# load GRanges with human genes
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+g <- genes(txdb)
+
+# subset to genes on chr6
+g_chr6 <- g[seqnames(g)=="chr6"]
+
+se <- summarizeOverlaps(g_chr6, bf, ignore.strand=TRUE)
+sum(assays(se)$count)
+sum(assays(se)$count == "0")
+# OR
+se <- summarizeOverlaps(features=g_chr6,
+                          reads=tps_27,
+                          ignore.strand=TRUE)
+sum(assay(se))
+sum(assay(se) == 0)
+
+count <- assay(se)
+fpm <- (count / sum(count)) * 1e6
+max(fpm)
+
+identical(names(g_chr6), rownames(assay(se)))
+
+fpkm <- fpm/width(ranges(g_chr6))*1e3
+median(fpkm)
+mean(fpkm)
+sum(fpkm > 1000)
+
+index = which(fpkm > 1000)
+top_entrez <- rowRanges(se)$"gene_id"[index]
+# top_entrez = rownames(fpkm)[fpkm > 1000]
+AnnotationDbi::select(org.Hs.eg.db, keys=top_entrez, keytype = "ENTREZID", columns = "SYMBOL")
+```
+
+

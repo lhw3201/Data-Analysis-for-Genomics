@@ -1,0 +1,636 @@
+---
+title: "Section 4: Genomic annotation with Bioconductor"
+author: "Haeun Lee"
+output: html_document
+date: "2026-01-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# Bioconductor packages
+BiocManager::install(c("BSgenome",
+                       "BSgenome.Hsapiens.UCSC.hg19.masked",
+                       "org.Hs.eg.db",
+                       "ensembldb",
+                       "EnsDb.Hsapiens.v75",
+                       "AnnotationHub",
+                       "rtracklayer",
+                       "TxDb.Hsapiens.UCSC.hg38.knownGene",
+                       "KEGGREST",
+                       "rols",
+                       "GSEABase"))
+
+# CRAN packages
+# install.packages(c("R.utils",
+#                    "png",
+#                    "DT"))
+```
+
+# Annotation of genes and transcripts
+## Reference sequence packages for model organisms
+```{r}
+library(BSgenome)
+library(Biostrings)
+# reference genomes
+ag = available.genomes()
+grep("Scerev", ag, value=TRUE)
+grep("Hsap", ag, value=TRUE)
+
+# inspect the human genome
+library(BSgenome.Hsapiens.UCSC.hg19)
+Hsapiens
+length(Hsapiens)
+class(Hsapiens)
+methods(class="BSgenome")
+
+# inspect human genome
+Hsapiens$chrX
+substr(Hsapiens$chrX, 5e6, 5.1e6)
+nchar(Hsapiens$chrY)
+nchar(Hsapiens[[24]])
+```
+In Biostrings, a pile of masks can be put on top of a sequence. A pile of masks is represented by a MaskCollection object and the sequence by an XString object. A MaskedXString object is the result of bundling them together in a single object.
+
+### Assessment
+
+Genomic sequence "mask" structures have been defined to isolate ambiguous, unmappable, and low-complexity segments of genomes so that sequence analysis research can be targeted to reflect current knowledge of sequence regions that are more likely to be functionally informative.
+```{r}
+library(BSgenome)
+grep("mask", grep("Drerio", available.genomes(), value=TRUE), invert=TRUE, value=TRUE) # exclude masked
+
+library(BSgenome.Hsapiens.UCSC.hg19.masked)
+# original sequence is always stored unmodified in a MaskedXString object
+c17m = BSgenome.Hsapiens.UCSC.hg19.masked$chr17
+c17 = BSgenome.Hsapiens.UCSC.hg19$chr17 # contain 'unmasked' from c17m only
+
+class(c17m)
+
+c22m = BSgenome.Hsapiens.UCSC.hg19.masked$chr22
+print(c22m)
+maskedratio(c22m)*100
+# OR
+# the masks of assembly gaps, aka “the AGAPS masks”;
+# the masks of intra-contig ambiguities, aka “the AMB masks”;
+# the masks of repeat regions that were determined by the RepeatMasker software, aka “the RM masks”;
+# the masks of repeat regions that were determined by the Tandem Repeats Finder software (where only repeats with period less than or equal to 12 were kept), aka “the TRF masks”
+round(100*sum(width(masks(c22m)$AGAPS))/length(c22m),0)
+```
+
+## Packages for gene and transcript catalogs
+
+Information about reference genome regions like genes, transcripts and exons can also be found in annotation packages. One major source of reference genome structure annotation is the UCSC Genome Browser.
+```{r}
+# import TxDb transcript database
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+txdb = TxDb.Hsapiens.UCSC.hg19.knownGene  # abbreviate
+class(txdb) # GenomicFeatures
+methods(class="TxDb")
+
+# extract and inspect genes from TxDb
+# returns a GRanges. Each range corresponds to a gene.
+genes(txdb)
+# GRanges and IRanges package tools can be used
+# counts the number of genes on each strand
+table(strand(genes(txdb)))
+# summary statistics describing the length in base pairs of genes in the human genome
+summary(width(genes(txdb)))
+
+# inspect largest gene in genome
+# which row in the GRanges represents the largest gene
+id = which.max(width(genes(txdb)))
+# gene_id metadata column lists the ENTREZ ID for a given gene
+genes(txdb)[id]
+library(org.Hs.eg.db)
+anno =  org.Hs.eg.db
+# ENTREZ IDs can be converted into meaningful information like gene symbol and name
+select(org.Hs.eg.db, keys="286297", keytype = "ENTREZID", columns = c("SYMBOL", "GENENAME"))
+
+# compare total size of exons to total size of genes
+# TxDb also includes a dataset for all known exons
+ex = exons(txdb)
+# fraction of bases in gene regions expressed as exons
+# some exons overlap, reduce() condenses exons into non-overlapping ranges so that every base in an exon is only counted once
+rex = reduce(ex)
+ex_width = sum(width(rex))    # bases in exons
+gene_width = sum(width(genes(txdb)))    # bases in genes
+ex_width/gene_width # 6.38% of bases in genes are exons, coding fraction of gene regions
+```
+
+## ensembldb, EnsDb: annotation from EMBL
+
+There are different annotation sources available: UCSC, Ensemble, etc
+-> Different resource gives different information
+```{r}
+# inspect data available from Ensembl
+library(ensembldb)
+library(EnsDb.Hsapiens.v75)
+names(listTables(EnsDb.Hsapiens.v75))
+
+# extract Ensembl transcripts
+edb = EnsDb.Hsapiens.v75  # abbreviate
+txs <- transcripts(edb, filter = GeneNameFilter("ZBTB16"),
+                   columns = c("protein_id", "uniprot_id", "tx_biotype"))
+txs
+
+# compare Ensembl and UCSC transcripts
+alltx = transcripts(edb)    # Ensembl is larger
+utx = transcripts(txdb)    # UCSC is smaller
+
+# table of biological types of transcripts
+table(alltx$tx_biotype)
+```
+
+### Assessment
+```{r}
+BiocManager::install("Gviz")
+library(devtools)
+install_github("genomicsclass/ph525x")
+library(ph525x)
+stopifnot(packageVersion("ph525x") >= "0.0.16") # do over if fail 
+
+# The linear structures are transcripts, composed of untranslated regions at the ends, exons (small yellow rectangles), and introns (arrows between exons). The collection of transcripts makes up a "gene model".
+modPlot("ESR1", useGeneSym=FALSE, collapse=FALSE)
+
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+txdb = TxDb.Hsapiens.UCSC.hg19.knownGene  # abbreviate
+
+# gene_id = 2099
+
+txs.2099 <- transcriptsBy(txdb, by="gene")$"2099"
+length(txs.2099)
+```
+
+## AnnotationHub, liftOver and rtracklayer
+```{r}
+# install.packages("remotes")
+
+# remotes::install_version("dbplyr", version = "2.3.4")
+# remotes::install_version("dplyr",  version = "1.1.2")
+# remotes::install_version("DBI", version = "1.2.3")
+
+library(AnnotationHub)
+ah <- AnnotationHub()
+ah
+
+methods(class="AnnotationHub")
+
+# lists the number of unique species which currently have records in AnnotationHub
+length(unique(ah$species))
+
+# filters records that match specific fields
+ah_human <- subset(ah, species == "Homo sapiens")
+ah_human
+
+# searches for records that match a desired string in any of their fields. Unlike subset(), you do not need to specify which field to search.
+query(ah, "HepG2")
+# multiple terms at once
+query(ah, c("HepG2", "H3K4me3"))
+hepg2 <- query(ah, "HepG2")
+hepg2_h3k4me3 <- query(hepg2, c("H3K4me3"))
+hepg2_h3k4me3
+# annotation metadata
+hepg2_h3k4me3$tags
+
+# # search records interactively by using display on a query
+# display(query(ah, "HepG2"))
+
+# To load a record from AnnotationHub, you need its ID. These commands find the ID number of the HepG2 H3K4me3 broadPeak file
+e118_broadpeak <- query(hepg2_h3k4me3, c("E118", "broadPeak"))
+id <- e118_broadpeak$ah_id
+id
+
+hepg2_h3k4me3_broad <- ah[["AH29728"]]
+hepg2_h3k4me3_broad
+# store the ID as a variable and use that variable for indexing
+alt_format <- ah[[id]]
+identical(hepg2_h3k4me3_broad, alt_format)
+```
+
+### Assessment
+```{r}
+library(AnnotationHub)
+ah = AnnotationHub()
+mah = mcols(ah)
+names(mah)
+sort(table(mah$species), decreasing=TRUE)[1:10]
+
+# files that address binding of CTCF to DNA from HepG2 cells
+HepG2.CTCF = query(query(ah, "HepG2"), "CTCF")
+HepG2.CTCF
+```
+## liftOver: Translating between reference builds
+```{r}
+# learn about liftOver from rtracklayer
+library(rtracklayer)
+?liftOver
+
+# Suppose we want to convert chromosome 1 gene locations from hg38 to hg19
+# get the GRanges for those genes from the TxDb for hg38
+# chromosome 1 gene locations in hg38
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+tx38 <- TxDb.Hsapiens.UCSC.hg38.knownGene
+# restricts the TxDb to features on chromosome 1
+seqlevels(tx38, pruning.mode="coarse") = "chr1"
+# acquires the GRanges for chromosome 1 genes
+g1_38 <- genes(tx38)
+
+# download the hg38 to hg19 chain file
+library(AnnotationHub)
+ah <- AnnotationHub()
+# chain file that specifies how features match across genome builds
+# searches AnnotationHub for chain files that relate hg19 and hg38
+ah.chain <- subset(ah, rdataclass == "ChainFile" & species == "Homo sapiens")
+query(ah.chain, c("hg19", "hg38"))
+# choose the record titled hg38toHg19.over.chain.gz.
+ch <- ah[["AH14108"]]
+
+# perform the liftOver
+# GRanges as the first argument and the chain file as the second argument
+g1_19L <- liftOver(g1_38, ch)
+g1_19L
+```
+
+### Assessment
+```{r}
+# download.file("http://hgdownload.cse.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz", "hg19ToHg38.over.chain.gz")
+# library(R.utils)
+# gunzip("hg19ToHg38.over.chain.gz")
+
+library(ERBS)
+data(HepG2)
+library(rtracklayer)
+# convert the HepG2 binding addresses to hg38
+ch = import.chain("hg19ToHg38.over.chain") 
+nHepG2 = liftOver(HepG2, ch)
+nHepG2
+
+start(HepG2)[1] - start(nHepG2)[1]
+```
+
+## Data import and export with rtracklayer
+```{r}
+library(devtools)
+install_github("genomicsclass/ERBS")    # install ERBS package
+
+# finds the path to the first file in the extdata directory of the ERBS package on your machine and assigns that file path to f1
+# narrowPeak file containing ER binding data from ENCODE
+f1 = dir(system.file("extdata",package="ERBS"), full=TRUE)[1]    # access data
+# follows a similar format to BED files with 4 additional columns specific to narrowPeak data
+# raw text that is tab-separated into columns
+readLines(f1, 4)    # look at a few lines
+
+# input file and a format argument that specifies how to parse that file into an object
+library(rtracklayer)
+imp = import(f1, format="bedGraph")    # import as bedGraph format
+# extra columns in the narrowPeak format are not named
+# can add metadata column names with names(mcols(imp))
+imp
+
+# set genome explicitly to ensure your data is processed correctly downstream
+# genome of the GRanges is NA by default
+genome(imp)    # genome identifier tag not set, but you should set it
+genome(imp) = "hg19"    # set genome
+genome(imp)
+
+# export() takes an object and writes an output file in a common genomic file format
+# GRanges gets converted into a BED format file
+export(imp, "demoex.bed")    # export as BED format  
+cat(readLines("demoex.bed", n=5), sep="\n")    # check output file
+```
+
+```{r}
+library(rtracklayer)
+data(targets) # microRNA target sites
+
+# It is not typical to add metadata to data.frame instances, as one has to fill a column with relevant information -> no reference genome information available in targets
+class(targets)
+summary(targets)
+targets
+
+library(GenomicRanges)
+mtar <- with(targets,
+GRanges(chrom, IRanges(start,end), strand=strand,
+targets=target, mirname=name))
+
+cat(export(mtar[1:5], format="bed"), sep="\n")
+cat("\n")
+cat(export(mtar[1:5], format="gff3"), sep="\n")
+
+mtar[1]$mirname # name of microRNA
+# OR in GFF3 format
+```
+# Annotation tools for systems biology
+## OrgDb: unified organism-specific annotation for systems biology
+Packages named org.*.eg.db collect information at the gene level with links to location, protein product identifiers, KEGG pathway and GO terms, PMIDs of papers mentioning genes, and to identifiers for other annotation resources.
+```{r}
+# load human OrgDb and inspect available keys
+# org: organism level annotation
+# Hs: Homo Sapiens
+# eg: Entrez gene as resource
+# db: SQLite based package
+library(org.Hs.eg.db)
+org.Hs.eg.db
+keytypes(org.Hs.eg.db) # columns() gives same answer
+
+# load GO.db and inspect available terms
+library(GO.db)
+allterms = keys(GO.db, keytype="TERM")
+allterms[1:5]
+
+# find GOID (gene ontology tag) for ribosome biogenesis
+select(GO.db,  keys = "ribosome biogenesis", keytype="TERM", columns="GOID")
+
+# find symbols for genes involved in ribosome biogenesis 
+select(org.Hs.eg.db, keys = "GO:0042254", keytype="GO", columns="SYMBOL")
+
+# you can pull out multiple columns at once
+select(org.Hs.eg.db, keys = "GO:0042254", keytype="GO", columns=c("SYMBOL", "ENTREZID"))
+
+# find gene ontology tags for related to ZNF658, which has the specified ENTREZID
+select(org.Hs.eg.db, keys= "26149", keytype="ENTREZID", columns="GO")
+
+# save GO tags to a character vector
+select(org.Hs.eg.db, keys= "26149", keytype="ENTREZID", columns="GO")$"GO"
+# myk = .Last.value
+
+# FOR KNIT purpose
+# find GO tags related to ZNF658 (ENTREZID 26149)
+go_tags <- select(org.Hs.eg.db,
+                  keys = "26149",
+                  keytype = "ENTREZID",
+                  columns = "GO")
+myk <- unique(na.omit(as.character(go_tags$GO)))
+
+# identify biological processes ZNF658 is involved in
+select(GO.db, keys=myk, columns="TERM")
+```
+### Assessment
+```{r}
+genes_17q21 <- select(org.Hs.eg.db,
+                       keys = "17q21.1",
+                       columns = "SYMBOL",
+                       keytype = "MAP")
+
+length(genes_17q21$SYMBOL)
+
+m17 = select(org.Hs.eg.db, keys="17q21.1", keytype="MAP", columns=c("SYMBOL", "GO"))
+sort(table(m17$GO), decreasing=TRUE)[1:10]
+
+m17[m17$SYMBOL == "ORMDL3" & m17$EVIDENCE == "TAS", ]
+```
+
+### Assessment
+```{r}
+library(Homo.sapiens)
+g = genes(Homo.sapiens)
+library(ERBS)
+data(HepG2)
+
+# resize(g,1) is a strand-respecting reduction of the gene interval to a single base representing the transcription start site
+kp = g[resize(g,1) %over% HepG2]
+
+nn = names(kp)
+m = select(Homo.sapiens, keys=nn, keytype="ENTREZID",
+           columns=c("SYMBOL", "GENENAME", "TERM", "GO"))
+library(DT)
+datatable(m)
+```
+## Using Kyoto Encyclopedia of Genes and Genomes (KEGG)
+```{r}
+# load KEGGREST package and inspect organism-specific gene pathways
+library(KEGGREST)
+brca2K = keggGet("hsa:675")    # reference to a specific gene
+names(brca2K[[1]])
+brpat = keggGet("path:hsa05212")    # info on a pathway
+brpat[[1]]$GENE[seq(1,132,2)] # entrez gene ids for pathway
+
+# inspect some entrez ids
+select(org.Hs.eg.db, keys="5888", keytype="ENTREZID", columns ="SYMBOL")
+select(org.Hs.eg.db, keys="675", keytype="ENTREZID", columns ="SYMBOL")
+
+# diagram showing structure of network
+library(png)
+library(grid)
+brpng = keggGet("hsa05212", "image")
+grid.newpage()
+grid.raster(brpng)
+
+# # working one
+# url <- "https://rest.kegg.jp/get/hsa05212/image"
+# tmp <- tempfile(fileext = ".png")
+# 
+# download.file(url, tmp, mode = "wb", quiet = TRUE)
+# 
+# img <- png::readPNG(tmp)
+# grid::grid.newpage()
+# grid::grid.raster(img)
+# 
+# # working one 2
+# brpng <- keggGet("hsa05212", "image")
+# 
+# img <- if (is.list(brpng)) brpng[[1]] else brpng   # handle both behaviors
+# 
+# dim(img)        # should be 3 numbers, e.g. 925 1265 4
+# range(img)      # should NOT be 0 0
+# 
+# grid.newpage()
+# grid.rect(gp = gpar(fill = "white", col = NA))
+# grid.raster(img)
+```
+
+### Assessment
+```{r}
+hsa_3845 <- unlist(keggGet("hsa:3845"))
+hsa_3845$NAME
+length(keggGet("hsa:3845")[[1]]$PATHWAY)
+
+library(png)
+oo = keggGet("hsa00790", "image")
+writePNG(oo, "im.png")
+grid.newpage()
+grid.raster(oo)
+
+```
+## EMBL's ontology lookup service
+```{r}
+library(rols)
+oo = Ontologies()
+oo
+oo[[1]]
+
+glis = OlsSearch("glioblastoma")
+glis
+res = olsSearch(glis)
+resdf = as(res, "data.frame") # get content
+resdf[1:4,1:4]
+resdf[1,5]  # full description for one instance
+```
+### Assessment
+```{r}
+library(rols)
+diab = OlsSearch("diabetes")
+olsRows(allRows(diab))
+
+fulld = olsSearch(allRows(diab))
+adf = as(fulld, "data.frame")
+sort(table(adf$ontology_name), decreasing=TRUE)[1:10]
+
+library(DT)
+datatable(adf)
+
+
+```
+
+# Verified assessment
+```{r}
+library(BSgenome.Hsapiens.UCSC.hg19)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(org.Hs.eg.db)
+library(ensembldb)
+library(EnsDb.Hsapiens.v75)
+library(GO.db)
+library(AnnotationHub)
+library(rtracklayer)
+library(KEGGREST)
+
+library(BSgenome.Hsapiens.UCSC.hg19)
+Hsapiens
+
+sort(seqlengths(Hsapiens),decreasing=TRUE)
+
+nchar(Hsapiens$chrX)/nchar(Hsapiens$chrY)
+
+
+# The TP53 gene codes for the p53 protein, a key regulator of cell cycle and stress response that is the most commonly mutated gene in cancer. Investigate TP53 in the systems biology databases.
+
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene    # abbreviate
+
+keytypes(org.Hs.eg.db)
+class(org.Hs.eg.db)
+org.Hs.eg.db
+
+TP53 <- select(org.Hs.eg.db, keys="TP53", keytype="SYMBOL", columns ="ENTREZID") # TP53 ENTREZ ID number
+gene_coords <- genes(txdb)[TP53$ENTREZID]
+gene_coords # TP53 gene location
+width(gene_coords)
+
+# answers
+tp53loc <- genes(txdb, filter=list(gene_id="7157"))
+seqnames(tp53loc)
+genebp = width(tp53loc)
+# ------
+
+# TP53 transcripts and exons in txdb
+txs.7157 <- transcriptsBy(txdb, by="gene")$"7157"
+length(txs.7157) # the number of transcripts
+
+exon <- exons(txdb)  # GRanges of exons
+exon.7157 <- subsetByOverlaps(exon, gene_coords)
+length(exon.7157) # the number of exons
+sum(width(reduce(exon.7157))) # the number of base pairs in the exon of TP53
+sum(width(reduce(exon.7157)))/width(gene_coords) # proportion of base pairs in TP53 contained in exons
+
+# answers
+length(transcripts(txdb, filter=list(gene_id="7157")))
+length(exons(txdb, filter=list(gene_id="7157")))
+exonbp = sum(width(reduce(exons(txdb, filter=list(gene_id="7157")))))
+exonbp
+exonbp/genebp    # genebp from previous question
+# -------
+
+# TP53 transcript information from ensembldb
+library(ensembldb)
+library(EnsDb.Hsapiens.v75)
+edb <- EnsDb.Hsapiens.v75    # abbreviate
+
+gnf <- GeneNameFilter("TP53")
+txs <- transcripts(
+  edb,
+  filter  = gnf,
+  columns = c("tx_id", "tx_biotype", "tx_cds_seq_start", "tx_cds_seq_end")
+) # TP53 transcripts in the EnsDb.Hsapiens.v75 database
+
+txs[1]
+txs$tx_cds_seq_start[1] # start of the coding sequence for the first transcript in the list
+
+i <- which(txs$tx_biotype == "processed_transcript")
+width(txs[i]) # length of specific transcript
+
+# answers
+Tx = transcripts(edb, filter = GeneNameFilter("TP53"))
+Tx
+Tx$tx_cds_seq_start[1]
+ind = Tx$tx_biotype == "processed_transcript"
+width(Tx[ind])
+# ------
+
+# GO tags associated with TP53
+keytypes(org.Hs.eg.db)
+tp53_go <- select(org.Hs.eg.db,
+                  keys = "TP53",
+                  columns = "GO",
+                  keytype = "SYMBOL")
+tp53_go # gene ontology tags associated with TP53
+length(unique(tp53_go$GO)) # the number of unique GO tags for TP53
+
+# Supporting evidence for TP53 annotations
+# EVIDENCE column: what kind of experimental evidence supports the involvement of the gene in a certain process
+sum(tp53_go$EVIDENCE == "IMP") # the number of TP53 processes inferred from a mutant phenotype ("IMP")
+
+tbl <- sort(table(tp53_go$GO), decreasing = TRUE)
+head(tbl) # GO tag with the most entries of supporting evidence
+
+# Using GO.db to to find the biological role of TP53
+keytypes(GO.db)
+select(GO.db, keys = "GO:0051726", keytype = "GOID", columns = "TERM") # biological process of TP53 with the most types of supporting evidence
+
+# TP53 location liftOver to hg38 genome build
+library(AnnotationHub)
+ah <- AnnotationHub()
+
+ah_human <- subset(ah, species == "Homo sapiens")
+query(ah, "TP53")
+
+# chain file that specifies how features match across genome builds
+ah.chain <- subset(ah, rdataclass == "ChainFile" & species == "Homo sapiens")
+query(ah.chain, c("hg19", "hg38"))
+ch <- ah[["AH14150"]]
+
+# perform the liftOver
+TP53_19L <- liftOver(gene_coords[1], ch)
+TP53_19L
+
+# answers
+hg19_to_hg38 = ah[["AH14150"]]
+library(rtracklayer)
+liftOver(gene_coords, hg19_to_hg38)
+# -----
+
+# p53 signaling pathway from KEGG
+# load KEGGREST package and inspect organism-specific gene pathways
+library(KEGGREST)
+p53 = keggGet("hsa04115")    # reference to a specific gene
+names(p53[[1]])
+length(p53[[1]]$GENE)/2
+
+p53pat = p53[[1]]$GENE # gene symbol + description
+type(p53pat)
+sum(grepl("\\bcyclin\\b", p53pat))
+# OR
+length(grep("cyclin", p53pat))
+
+p53pat[grep("cyclin", p53pat)]    # inspect gene names containing cyclin
+```
+
+
+
+
+
+
+
+
