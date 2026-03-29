@@ -1,0 +1,246 @@
+---
+title: "Section 2.1: Introduction to DNA methylation"
+author: "Haeun Lee"
+date: "2026-02-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction to DNA methylation
+## Epigenetics
+## DNA Methylation
+## DNA Methylation Assessment
+### DNA Methylation Assessment Q3
+Download and install the human genome package BSgenome.Hsapiens.UCSC.hg19. Define the following 1000 nucleotide subsequence from chr22:
+
+```{r}
+library(BSgenome.Hsapiens.UCSC.hg19)
+chr22 <- Hsapiens[["chr22"]]
+s <- subseq(chr22,start=23456789,width=1000)
+print( as.character(s) )
+```
+
+What is the GC-content (the proportion of bases that are either a "G" or a "C") of s (give answer as a proportion between 0 and 1)?
+
+```{r}
+letterFrequency(s, "GC")/length(s)
+```
+
+### DNA Methylation Assessment Q4
+
+How many CpGs (a "C" followed directly by a "G") are in s (as defined in the previous question)?
+
+```{r}
+countPattern("CG",s)
+```
+
+### DNA Methylation Assessment Q5
+
+How many GpCs (a "G" followed directly by a "C") are in s (as defined in the previous question)?
+
+```{r}
+countPattern("GC",s)
+```
+
+## CpG islands
+- The genome is depleted of CpGs.
+- CpG cluster into islands enriched near promoter
+
+## CpG islands Assessment
+### CpG islands Assessment Q1
+
+In the video we briefly described an algorithm that defines CpG islands. This algorithm has been used to create a list that is available in most genomic annotation data bases.
+
+The Bioconductor AnnotationHub package, which we covered in the Introduction to Bioconductor course, permits us to explore available annotations. By typing the following commands we can see what is available:
+
+```{r}
+library(AnnotationHub)
+ah <- AnnotationHub()
+head(ah)
+```
+
+We can subset these to just the databases related to the hg19 genome:
+
+```{r}
+ah <- subset(ah,ah$genome=="hg19")
+```
+
+We can then use the query function to search the available annotations in this "hub". For example, we can search for "gene" annotations by calling:
+
+```{r}
+query(ah,"genes")
+```
+
+On the left you see the record IDs for AnnotationHub.
+
+What is the record ID used by AnnotationHub for hg19 CpG Islands?
+
+```{r}
+query(ah,"CpG")
+```
+
+### CpG islands Assessment Q2
+
+If the CpG Island record ID from above is stored as the variable cgi_id, we can retrieve the annotations from AnnotationHub with the following command.
+
+What is the class of the object cgi?
+
+```{r}
+cgi_id = "AH5086"
+cgi <- ah[[cgi_id]]
+class(cgi)
+```
+
+### CpG islands Assessment Q3
+
+How many CpG islands are represented in the object cgi defined in the previous question?
+
+```{r}
+cgi
+```
+
+### CpG islands Assessment Q4
+
+We can extract the sequence of each CpG Island with the following command:
+
+```{r}
+library(BSgenome.Hsapiens.UCSC.hg19)
+cgiseq <- getSeq(Hsapiens, cgi)
+```
+
+Note that we must verify the same genome builds are being used here:
+
+```{r}
+genome(cgi)[1:24]
+genome(Hsapiens)[1:24]
+```
+
+We will use these sequences to determine the observed to expected ratios at CpG Islands as described in the video.
+
+Compute the proportion of Cs for each island and report the median of these proportions.
+
+```{r}
+median(letterFrequency(cgiseq,"C", as.prob = TRUE))
+# Make a histogram to see they are generally high
+hist(letterFrequency(cgiseq, "C", as.prob=TRUE))
+```
+
+### CpG islands Assessment Q5
+
+Compute the proportion of Gs for each island and report the median of these proportions.
+
+```{r}
+median(letterFrequency(cgiseq,"G", as.prob = TRUE))
+# Make a histogram to see they are generally high
+hist(letterFrequency(cgiseq, "G", as.prob=TRUE))
+```
+
+### CpG islands Assessment Q6
+
+For each CpG island, we now have the proportion of Cs (pC) and the proportion of Gs (pG). Using these values, we can compute the proportion of CpGs we expect to see by chance if all dinucleotides have the same probability of appearing. To a close approximation this expected proportion is simply pC * pG.
+
+The number of CpGs that we expect to see in a genomic interval of size L is then L * pC * pG. Once we have this expectation we can compute the observed to expected ratio.
+
+Compute the expected number of CpGs in each CpG island using the formula. For each island divide the observed number of CpGs by the expected number of CpGs.
+
+Report the median of these observed to expected ratios
+```{r}
+exp.CpG <- width(cgiseq)*letterFrequency(cgiseq,"C", as.prob = TRUE)*letterFrequency(cgiseq,"G", as.prob = TRUE)
+obs.CpG <- vcountPattern("CG",cgiseq)
+median(obs.CpG/exp.CpG)
+
+# OR
+
+library(BSgenome.Hsapiens.UCSC.hg19)
+cgiseq= getSeq(Hsapiens,cgi)
+
+res = alphabetFrequency(cgiseq)
+L = rowSums(res)
+cprop = res[,"C"]/L
+gprop = res[,"G"]/L
+expected = L * cprop * gprop
+observed = vcountPattern("CG",cgiseq)
+cpgoe=observed/expected
+median(cpgoe)
+## We can look at a histogram
+hist(cpgoe)
+abline(v=1,col=2)
+##because these are ratios, better to look at log
+hist(log2 ( cpgoe ))
+abline(v=0,col=2)
+```
+
+### CpG islands Assessment Q7
+
+Repeat the previous exercise for GpCs instead of CpGs.
+
+What is the median observed to expected ratio?
+
+```{r}
+obs.GpC <- vcountPattern("GC",cgiseq)
+median(obs.GpC/exp.CpG)
+
+# OR
+
+observed = vcountPattern("GC",cgiseq)
+gpcoe=observed/expected
+median(gpcoe)
+### We can look at a histogram
+boxplot(list(cpgoe,gpcoe))
+```
+
+### CpG islands Assessment Q8
+
+Note that the CpG observed to expected ratio is below 1 and that few islands actually surpass a ratio of 1 or more. However, for the rest of the genome, the observed to expected ratio is substantially smaller. To look at regions that are not islands let's shift the islands we have by 20,000 nucleotides.
+
+To avoid problems with short sequences, we will restrict our analysis to the mapped chromosomes:
+
+```{r}
+chr2use <- seqlevels(cgi)[1:24]
+index = which(seqnames(cgi) %in% chr2use)
+```
+
+Define the non-CpG islands by shifting the known ones by 20,000 nucleotides.
+
+```{r}
+noncgi <- shift(cgi[index],20000)
+```
+
+Some of these regions contain repeats or are unmapped so we remove regions that have 0 Cs or 0 Gs:
+
+```{r}
+library(BSgenome.Hsapiens.UCSC.hg19)
+noncgiseq <- getSeq(Hsapiens,noncgi)
+
+nullres <- alphabetFrequency(noncgiseq)
+keepIndex <- nullres[,"G"]>0 & nullres[,"C"]>0 & nullres[,"N"]==0
+nullres <- nullres[keepIndex,]
+noncgiseq <- noncgiseq[keepIndex]
+```
+
+Use nullres and noncgiseq defined above to compute the expected number of CpGs we should see in each of the regions. Report the median observed to expected ratio for these regions.
+
+```{r}
+exp.CpG.non <- width(noncgiseq) * nullres[,"C"]/width(noncgiseq) * nullres[,"G"]/width(noncgiseq)
+obs.CpG.non <- vcountPattern("CG",noncgiseq)
+median(obs.CpG.non/exp.CpG.non)
+
+# OR
+
+L2 = rowSums(nullres)
+cprop2 = nullres[,"C"]/L2
+gprop2 = nullres[,"G"]/L2
+expected2 = L2 * cprop2 * gprop2
+observed2 = vcountPattern("CG",noncgiseq)
+noncgioe=observed2/expected2
+median(noncgioe)
+## We can compare them
+boxplot(gpcoe,noncgioe,cpgoe)
+```
+
+
+
+

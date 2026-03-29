@@ -1,0 +1,279 @@
+---
+title: 'Section 2.5: Verified Assessment'
+author: "Haeun Lee"
+date: "2026-02-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Verified Assessment: DNA Methylation
+## Verified Assessment Setup
+
+This assessment will walk you through an analysis of a publicly available dataset from Sabunciyan et al., 2015 studying epigenetic changes in peripheral blood in acute mania.
+
+Because this assessment uses raw data from GEO, you will need internet access and the ability to download ~700 MB.
+
+Like all end-of-section assessments, this assessment is available to verified certificate learners only.
+
+If you struggle with this assessment, revisit the course content as well as the code from the CpGIslandShores assessment.
+
+### Downloading IDAT files and constructing the RGChannelSet
+
+Some GEO entries include the original IDAT files as supplementary data. Download the supplementary IDAT files for this paper from GEO (note that this may take time as the download is ~600 MB):
+
+```{r}
+library(GEOquery)
+# getGEOSuppFiles("GSE68777")    # download supplementary files
+untar("GSE68777/GSE68777_RAW.tar", exdir = "GSE68777/idat")    # extract idat.gz files
+length(list.files("GSE68777/idat", pattern = "idat"))    # check that you have 80 files
+```
+
+Unzip the individual IDAT files:
+
+```{r}
+idatFiles = list.files("GSE68777/idat", pattern = "idat.gz$", full = TRUE) 
+sapply(idatFiles, gunzip, overwrite = TRUE)    # unzip idat files
+```
+
+Now read the IDAT files into an RGChannelSet using read.metharray.exp (this may take a couple minutes):
+
+```{r}
+library(minfi)
+rg_68777 = read.metharray.exp("GSE68777/idat")
+```
+
+### Acquiring pData from GEO
+
+To create the pData table for this RGChannelSet, download the pData from the GEO experiment, perform the wrangling operations shown, and bind it to rg_68777:
+
+(This will take a couple minutes as it requires a 95.7 MB download.)
+
+```{r}
+library(stringr)
+setwd('/Users/iha-eun/Desktop/HarvardX/02. Case Studies in Functional Genomics/Section 2_DNA methylation')
+# geo <- getGEO("GSE68777")    # download the main GEO data
+geo <- getGEO(filename = "GSE68777_series_matrix.txt")
+# extract phenotype data
+pdat <- pData(geo)
+
+# format rownames to match rg_68777 sample names
+rownames(pdat) = paste(pdat$geo_accession, pdat$title, sep="_")
+
+# extract group and sex metadata
+pdat$group = as.factor(str_remove(pdat$characteristics_ch1.1, "^diagnosis: "))
+pdat$sex = as.factor(str_remove(pdat$characteristics_ch1.2, "^Sex: "))
+pdat = pdat[,c("group", "sex")]
+
+# make sure rows are in the same order as samples from the rg set
+pdat = pdat[sampleNames(rg_68777),]
+
+# add pData to rg_68777
+pData(rg_68777) = as(pdat, "DataFrame")
+```
+
+Note that you can access the matrix of counts with assay(rg_68777).
+
+### Q1: Dataset characteristics
+
+```{r}
+nrow(assay(rg_68777)) # the number of features
+ncol(assay(rg_68777)) # the number of samples
+sum(pData(rg_68777)$group == "Mania") # the number of patients in Mania group
+sum(pData(rg_68777)$group == "Mania" & pData(rg_68777)$sex == "Male")
+```
+
+### Q2: Preprocessing
+
+Preprocess the data with preprocessIllumina(), then assign locations to each CpG with mapToGenome() and compute methylation values with ratioConvert() using type="Illumina". Reassign the preprocessed results to the rg_68777 object.
+
+What is the class of rg_68777 after these processing steps?
+
+```{r}
+rg_68777 <- preprocessIllumina(rg_68777)
+rg_68777 <- mapToGenome(rg_68777)
+rg_68777 <- ratioConvert(rg_68777, type="Illumina")
+
+class(rg_68777)
+```
+
+### Q3: Beta values
+
+Get the beta values for rg_68777 and save them as y.
+
+What is the mean value of y at "cg14008030" across all samples?
+
+```{r}
+y = getBeta(rg_68777)
+m = mean(y["cg14008030",])
+```
+
+### Q4: MDS plot
+
+Make an MDS plot of the matrix of beta values in y. Try coloring the points by group (control/mania) or by sex (male/female) to look for structure within the data.
+
+Which of the following is true about the MDS plot?
+
+```{r}
+mds <- cmdscale(dist(t(y)))
+plot(mds, col=rg_68777$group)
+legend("topleft",levels(pData(rg_68777)$group),col=1:2,pch=1)
+
+plot(mds, col=rg_68777$sex)
+legend("topleft",levels(pData(rg_68777)$sex),col=1:2,pch=1)
+```
+
+### Q5: limma effect sizes
+
+Use the limma package to perform a site-by-site (CpG-by-CpG) analysis for differentially methylated CpGs. Create a model matrix X that includes only the group variable. Then, use lmFit() to fit linear models to the beta values y given the model matrix X.
+
+Note that the fit will provide coefficients for group using control as the reference level.
+
+Which CpG site has the largest positive effect size for the group variable?
+Report the name starting with "cg".
+
+```{r}
+library(limma)
+
+X = model.matrix(~rg_68777$group)
+
+fit = lmFit(y,X)
+max.i = which.max(fit$coefficients[,2])
+rg_68777$group <- factor(rg_68777$group, levels = rev(levels(rg_68777$group)))
+levels(rg_68777$group) # Reference = "Ctr"
+
+rg_68777[max.i] # CpG site with the largest positive effect size for the group variable
+seqnames(rg_68777[max.i]) # On which chromosome is this CpG
+start(rg_68777[max.i]) # In what position on that chromosome is this CpG
+max(fit$coefficients[,2]) # effect size of the group variable at that CpG
+```
+
+### Q6: Boxplot of methylation levels at a specific CpG
+
+Make a boxplot of methylation values at the CpG site with the largest positive effect size, grouping by mania status.
+
+Which of the following are true about the methylation of this CpG site in control and mania patients?
+- This CpG is more highly methylated in mania samples than in control samples.
+- Control samples have more variable methylation status at this CpG than mania samples.
+
+```{r}
+mania.i = which(pData(rg_68777)$group == "Mania")
+ctr.i = which(pData(rg_68777)$group == "Ctr")
+
+hist(y["cg12434901",mania.i], ylab = "methylation value")
+hist(y["cg12434901",ctr.i], ylab = "methylation value")
+
+library(ggplot2)
+df = data.frame(meth = y[max.i,], group = rg_68777$group) 
+df %>% ggplot(aes(x = group, y = meth)) +
+    geom_boxplot() +
+    geom_point()
+```
+
+### Q7: limma p-values and q-values
+
+Use eBayes() to calculate the p-values for individual CpGs. Then, use qvalue() to convert them to q-values. Save the q-values as qval.
+
+How many CpGs genes have q-values smaller than 0.05?
+
+```{r}
+eb = eBayes(fit)
+
+library(qvalue)
+qvals <- qvalue(eb$p.value[,2])$qvalue
+
+sum(qvals < 0.05)
+```
+
+### Q8: Comparing limma results to the publication
+
+The names of the CpGs with q-values below 0.05:
+
+```{r}
+cpg_q <- names(qvals[qvals < 0.05])
+```
+
+The original paper reported a single differentially methylated CpG on chromosome 15, but they did not adjust for multiple testing.
+
+How many of the CpGs with a q-value below 0.05 are on chromosome 15?
+
+```{r}
+sum(seqnames(rg_68777[cpg_q,]) == "chr15")
+```
+
+### Q9: Number of nearby CpGs
+
+For this problem, we will use the location of the CpG discussed in question 5 (that is, the CpG with the largest positive effect size by group). Find all the CpGs within 10000 basepairs of the location of this CpG.
+
+How many CpGs are within 10000 bp of the CpG with the largest magnitude effect size?
+
+```{r}
+cg12434901 = rg_68777[max.i]
+gr = granges(cg12434901) + 10000
+dataIndex = which(granges(rg_68777)%over%gr) # all CpGs within gr
+length(dataIndex)
+```
+
+### Q10: Plot of CpG methylation at surrounding CpGs
+
+Use matplot() to create a plot showing the methylation values for all samples for the CpGs identified in the previous question (that is, CpGs within 10000 base pairs of the CpG with the largest effect size). Use color to distinguish mania from control.
+
+Which of the following is true about methylation of these CpGs?
+
+Only the CpG with the highest effect size appears differentially methylated, with no apparent differential methylation within 10000 bp.
+
+```{r}
+pos=start(rg_68777[dataIndex])
+matplot(pos,y[dataIndex,],col=rg_68777$group)
+```
+
+### Q11: bumphunter
+
+Now we are going to explicitly search for regions using the bumphunter function. We will use permutation to assess statistical significance. Because the function is slow, we will restrict our analysis to chromosome 17.
+
+```{r}
+index <- which(seqnames(rg_68777)=="chr17")
+chr17 <- rg_68777[index,]
+```
+
+If your computer has more than one core, you can use parallel computing to speed up the procedure.
+
+```{r}
+library(doParallel)
+ncores <- detectCores()
+registerDoParallel(cores = ncores)
+```
+
+We can now run the bumphunter() function to find differentially methylated regions (DMR). Define a model matrix that includes group. Set the seed to 1 (this is important to match the assessment answer as permutations are random). Then, run bumphunter() with a cutoff of 0.1 and 100 permutations (we recommend more in practice but use a small number for computational speed only).
+
+How many bumps (potential DMRs) were found on chromosome 17?
+How many DMRs on chromosome 17 have a p-value below 0.05?
+How many DMRs on chromosome 17 have a family-wise error rate less than 0.1?
+
+```{r}
+set.seed(1)
+X = model.matrix(~chr17$group)
+res = bumphunter(chr17,X,cutoff=0.1,B=100)
+
+nrow(res$tab)
+sum(res$table$p.value < 0.05)
+sum(res$table$fwer < 0.1)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

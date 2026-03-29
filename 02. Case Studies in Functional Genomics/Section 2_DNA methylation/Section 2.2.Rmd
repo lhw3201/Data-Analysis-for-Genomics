@@ -1,0 +1,615 @@
+---
+title: 'Section 2.2: DNA Methylation Measurement'
+author: "Haeun Lee"
+date: "2026-02-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# DNA Methylation Measurement
+## Bisulfite Treatment
+## Measuring Methylation with the 450K Array
+- Methylation is not exactly the same across cells -> measurement result is usually between 0 to 1.
+
+## Statistical Considerations
+1. CpG measurements are from a continuum between 0 and 1
+- Average Met or unMet data across millions of cells
+2. Measurements contain within population variability
+*Genomic traceplot*
+- Regional analysis
+
+## DNA Methylation Data Analysis in R
+In this unit we will show an example of analyzing methylation data. We will use colon cancer data from TCGA. The data was created with the Illumina 450K array and we have already processed the raw data to create matrix with methylation measurements. The script that creates these ojects is here: https://github.com/genomicsclass/labs/blob/master/Rscripts/read_tcga_meth.R
+
+Let's begin by loading the data
+```{r,message=FALSE}
+devtools::install_github("genomicsclass/coloncancermeth")
+library(S4Vectors)
+library(coloncancermeth)
+data(coloncancermeth)
+```
+
+We know have three tables one containing the methylation data, one with information about the samples or columns of the data matrix, and granges object with the genomic location of the CpGs represetned in the rows of the data matrix
+
+```{r}
+dim(meth) ##this is the methylation data (485512 CpGs, 26 samples)
+dim(pd) ##this is sample information (26 samples, 105 TCGA information)
+length(gr)
+```
+
+The `pd` object includes clinical information. One the columns tells us if the sample is from colon cancer or from normal tissue
+
+```{r}
+colnames(pd)
+table(pd$Status)
+normalIndex <- which(pd$Status=="normal")
+cancerlIndex <- which(pd$Status=="cancer")
+```
+
+
+Let's start by taking a quick look at the distribution of methylation measurements for the normal samples:
+
+```{r}
+i=normalIndex[1]
+plot(density(meth[,i],from=0,to=1),main="",ylim=c(0,3),type="n")
+for(i in normalIndex){
+  lines(density(meth[,i],from=0,to=1),col=1)
+}
+### Add the cancer samples
+for(i in cancerlIndex){
+  lines(density(meth[,i],from=0,to=1),col=2)
+} # more at the middle
+```
+Typically methylated data contains 2 peaks, methylated and unmethylated.
+
+We are interested in finding regions of the genome that are different between cancer and normal samples. Furthermore, we want regions that are consistenly different therefore we can treat this as an inference problem. We can compute a t-statistic for each CpG:
+
+```{r,message=FALSE}
+library(limma)
+X <- model.matrix(~pd$Status)
+fit <- lmFit(meth,X)
+eb <- eBayes(fit)
+```
+
+A volcano plot reveals many differences:
+
+```{r}
+library(rafalib)
+splot(fit$coef[,2],-log10(eb$p.value[,2]),xlab="Effect size",ylab="-log10 p-value")
+```
+
+If we have reason to believe for DNA methylation to have an effect on gene expression, a *region of the genome* needs to be affected, not just a single CpG, we should look beyond. Here is plot of the region surrounding the top hit:
+
+```{r,message=FALSE}
+library(GenomicRanges)
+i <- which.min(eb$p.value[,2]) # min pvalue of cancer samples
+middle <- gr[i,]
+# give all rows within the region of interest
+Index<-gr%over%(middle+10000) # middle+10000: generate range of -5000 & +5000 from middle point
+cols=ifelse(pd$Status=="normal",1,2)
+chr=as.factor(seqnames(gr))
+pos=start(gr)
+
+plot(pos[Index],fit$coef[Index,2],type="b",xlab="genomic location",ylab="difference")
+matplot(pos[Index],meth[Index,],col=cols,xlab="genomic location")
+```
+
+We can search for these regions explicitly instead of searching for single points, as explained by Jaffe and Irizarry (2012) [http://www.ncbi.nlm.nih.gov/pubmed/22422453]. 
+
+## Finding Differentially Methylated Regions in R
+
+If we are going to perform regional analysis we first have to define a region. But one issue is that not only do we have to separate the analysis by chromosome but that within each chromosome we usually have big gaps creating subgroups of regions to be analyzed.
+
+```{r}
+chr1Index <- which(chr=="chr1")
+hist(log10(diff(pos[chr1Index])),main="",xlab="log 10 method") # show gaps between points
+```
+For some regions, the platform leaves a million base pair gap (10^5, 10^6, ...) with no probes in it.
+
+Let's break up the chromosomes into regions that could be analyzed together.
+We can create groups in the following way.
+
+```{r,message=FALSE}
+BiocManager::install("bumphunter")
+library(bumphunter)
+cl = clusterMaker(chr,pos,maxGap=500) # any two points that are within 500 base pairs away, put into a group
+table(table(cl)) ##shows the number of regions with 1,2,3, ... points in them (ex. 141457 clusters contain only 1 point)
+```
+
+Now let's consider two example regions:
+
+```{r}
+###Select the region with the smallest value
+cl[which.min(fit$coef[,2])] # 156293th cluster contains the biggest negative value
+Index <- which(cl==cl[which.min(fit$coef[,2])]) # all indexes in cluster 156293
+matplot(pos[Index],meth[Index,],col=cols,pch=1,xlab="genomic location",ylab="methylation") # only 1 point shows difference in methylation
+
+x1=pos[Index]
+y1=fit$coef[Index,2]
+plot(x1,y1,xlab="genomic location",ylab="Methylation difference",ylim=c(-1,1))
+abline(h=0,lty=2)
+abline(h=c(-.1,.1),lty=2)
+```
+
+This region shows only a single CpG as different. In contrast, notice this region:
+
+```{r}
+Index=which(cl==72201) ##we know this is a good example from analysis we have already performed
+
+matplot(pos[Index],meth[Index,],col=cols,pch=1,xlab="genomic location",ylab="methylation")
+
+x2=pos[Index]
+y2=fit$coef[Index,2]
+plot(x2,y2,xlab="genomic location",ylab="Methylation difference",ylim=c(-1,1)) # regional difference exists
+abline(h=0,lty=2)
+abline(h=c(-.1,.1),lty=2)
+```
+
+<a name="DMR"></a>
+
+If we are interested in prioritizing regions over single points, we need an alternative approach. If we assume that the real signal is smooth, we could use statistical smoothing techniques such as loess. Here is an example two regions above
+
+```{r}
+lfit <- loess(y1~x1,degree=1,family="symmetric",span=1/2)
+plot(x1,y1,xlab="genomic location",ylab="Methylation difference",ylim=c(-1,1))
+abline(h=c(-.1,0,.1),lty=2)
+lines(x1,lfit$fitted,col=2)
+
+lfit <- loess(y2~x2,degree=1,family="symmetric",span=1/2)
+plot(x2,y2,xlab="genomic location",ylab="Methylation difference",ylim=c(-1,1))
+abline(h=c(-.1,0,.1),lty=2)
+lines(x2,lfit$fitted,col=2)
+```
+
+The bumphunter automates this procedure (can create cluster automatically as well):
+
+```{r}
+res<-bumphunter(meth,X,chr=chr,pos=pos,cluster=cl,cutoff=0.1,B=0) # automatically look for regions above cutoff
+tab<-res$table
+```
+
+We now have a list of regions instead of single points. Here we look at the region with the highest rank if we order by area:
+
+```{r}
+Index=(tab[1,7]-3):(tab[1,8]+3) # define region with 3 buffer
+matplot(pos[Index],meth[Index,,drop=TRUE],col=cols,pch=1,xlab="genomic location",ylab="Methylation",ylim=c(0,1))
+plot(pos[Index],res$fitted[Index,1],xlab="genomic location",ylab="Methylation difference",ylim=c(-1,1))
+abline(h=c(-0.1,0,.1),lty=2)
+```
+bumphunter() can actually try to estimate uncertainty for these regions, like attach a p value, or a false discovery rate to these regions by using permutations (B≠0; define null distributions for the region, not point).
+
+The function also allows from smoothing and permutation based inference for the regions. However, we do not recommend running the function with these options without the ability to parallelize. 
+
+## Finding Differentially Methylated Regions in R Assessment
+
+Up to now, the assessments have focused on general characteristics of methylation and CpG sites across the human genome. We are now ready to analyze methylation measurement data. We will be working with a small subset of TCGA data that we have created for illustrative purposes. This is real DNA methylation data from cancer and normal samples. Note that we are going to use some of the material we learned in course 3 (Advanced Statistics) and course 5 (Introduction to Bioconductor). If you have not done so already, you will need to install the following library from the GitHub repository:
+
+```{r}
+library(devtools)
+install_github("genomicsclass/coloncancermeth")
+```
+
+Now we can load the library as well as the needed data objects:
+
+```{r}
+library(coloncancermeth)
+data(coloncancermeth)
+dim(meth)
+dim(pd)
+print(gr)
+```
+
+### Finding Differentially Methylated Regions in R Assessment Q1
+
+From dim(pd) we can see that there are a total of 26 samples.
+
+How many are cancer samples? 26
+
+Which column of the meth matrix is a cancer sample and has BCR patient barcode "TCGA-A6-4107"?
+
+```{r}
+sum(pd$Status == "cancer")
+
+## identify colum with BCR barcode
+grep("barcode", colnames(pd), value = TRUE)
+which(pd$bcr_patient_barcode == "TCGA-A6-4107" & pd$Status == "cancer")
+```
+
+### Finding Differentially Methylated Regions in R Assessment Q2
+
+Use the methylation profiles to compute a Euclidean distance between each sample:
+
+```{r}
+d <- dist(t(meth))
+```
+
+Now use the cmdscale() function to create an MDS plot (https://genomicsclass.github.io/book/pages/mds.html) that graphically shows approximate distances between the samples, using color to distinguish cancer and normal samples.
+
+```{r}
+cmdscale(d)
+cols = as.numeric(pd$Status)
+plot(cmdscale(d),col = cols)
+```
+
+Which of the following best describes the MDS plot?
+
+The MDS plot shows separation between cancer and normal samples, but only in the first dimension. The second dimension seems to be associated with a large variability within the cancers.
+
+### Finding Differentially Methylated Regions in R Assessment Q3
+
+For each CpG compute p-values for the cancer versus normal comparison using the limma package:
+
+```{r}
+library(limma)
+X <- model.matrix(~pd$Status)
+fit <- lmFit(meth,X)
+eb <- eBayes(fit)
+pvals <- eb$p.value[,2]
+```
+
+Model matrix creates a design like:
+$ Y = \beta_0 + \beta_1 \cdot Status $
+
+Where:
+	•	β0 = mean of the reference group
+	•	β1 = difference between the other group and the reference
+
+So:
+
+$ \beta_1 = (\text{Group2}) - (\text{Reference group}) $
+
+
+```{r}
+levels(pd$Status) # Reference = "normal"
+```
+
+β1 = cancer − normal
+
+Now use the qvalue() function in the qvalue package to obtain q-values.
+
+What proportion of CpG sites have q-values smaller than 0.05?
+To refresh your memory on q-values, read the end of the multiple testing section (https://genomicsclass.github.io/book/pages/multiple_testing.html).
+
+```{r}
+qvals <- qvalue(pvals)
+mean(qvals$qvalues < 0.05)
+```
+
+### Finding Differentially Methylated Regions in R Assessment Q4
+
+Before high-throughput technologies were available, cancer epigenetics research focused on searching for CpG islands showings higher levels of methylation in cancer (hypermethylated). Let's explore the data at hand in this regard.
+
+What proportion of the CpGs showing statistically significant differences (defined with q-values in the previous question) are, on average, higher in cancer compared to normal samples?
+
+```{r}
+sig.ind <- which(qvals$qvalues < 0.05)
+sig.diff <- fit$coefficients[sig.ind,2]
+mean(sig.diff > 0) # higher methylation in cancer than in normal
+```
+
+### Finding Differentially Methylated Regions in R Assessment Q5
+
+Now let's determine which of the differentially methylated CpGs are in CpG islands.
+
+Let's redefine CpG islands as cgi:
+
+```{r}
+library(AnnotationHub)
+ah <- AnnotationHub()
+cgi <- ah[["AH5086"]] # CpG island
+```
+
+What proportion of the differentially methylated CpGs are inside islands?
+
+```{r}
+mean(gr[sig.ind]%over%cgi) # gr: collection of CpG sites
+```
+
+Note that we can now see the proportions of each combination.
+
+```{r}
+islands=gr[sig.ind]%over%cgi
+hypermethylated=fit$coef[sig.ind,2]>0
+prop.table( table(islands,hypermethylated) )
+```
+
+### Finding Differentially Methylated Regions in R Assessment Q6
+
+Now we will use the bumphunter package to separate the differentially methylated CpGs intro groups.
+
+```{r}
+library(bumphunter)
+X <- model.matrix(~pd$Status)
+chr <- as.character(seqnames(gr))
+res <- bumphunter(meth,X,chr=chr,pos=start(gr),cutoff=0.1)
+```
+
+From here we get a table of regions:
+
+```{r}
+head(res$table)
+```
+
+Note that the bumphunter() function has options to assess uncertainty, which are turned on through the B argument. However, these options make this function computationally intensive. We therefore skip this step here and, instead of filtering by statistical significance, filter by region size.
+
+```{r}
+dmrs <- res$table[ res$table$L>=3, ]
+```
+
+Note that this table is not a GenomicRanges object, but we can turn it into one easily:
+
+```{r}
+dmrs <- makeGRangesFromDataFrame(dmrs)
+```
+
+For the regions in dmrs, find the distance to the closest island.
+
+What proportion of DMRs overlap a CpG island?
+
+```{r}
+dist = distanceToNearest(dmrs,cgi)
+mean(mcols(dist)$distance == 0)
+```
+
+### Finding Differentially Methylated Regions in R Assessment Q7
+
+What proportion of DMRs are within 2000 basepairs from a CpG island, but do not overlap?
+
+```{r}
+mean(0 < mcols(dist)$distance & 2000 > mcols(dist)$distance)
+
+```
+
+## Reading Raw 450K Array Data with minfi
+
+In this unit we will demonstrate how to read idat files from the illumina 450K DNA methylation array. We make use the the Bioconductor minfi package [cite 24478339].
+Minfi package can read, preprocess, and analyze data.
+
+```{r}
+BiocManager::install(c("minfi","IlluminaHumanMethylation450kmanifest","IlluminaHumanMethylation450kanno.ilmn12.hg19"))
+library(minfi)
+```
+
+The first step is to determine the basename of the idat files (raw data for this tech). Note that for each sample we have two files: one for red and green channels respectively. These files are found here: <https://github.com/genomicsclass/rawdata/tree/master/idats>
+
+```{r}
+path <- "/Users/iha-eun/Desktop/HarvardX/02. Case Studies in Functional Genomics/Section 2_DNA methylation/idats"
+list.files(path)
+```
+
+Let's start by reading in the csv file, which contains clinical information. This has one row for each sample and one of the columns includes the "basenames" for the files.
+
+```{r}
+setwd(path)
+targets<-read.csv("targets.csv",as.is=TRUE) # clinical information of all files
+dim(targets) # 6 samples (Red & Green channels)
+names(targets)
+targets$Basename
+```
+
+To make this script work in any working directory  we can edit that column to contain the absolute paths. Then we are ready to read in the raw data with `read.metharray`:
+
+```{r}
+targets$Basename <- file.path(path,targets$Basename)
+rgset <- read.metharray(targets$Basename,verbose=TRUE)
+pData(rgset)<-as(targets, "DataFrame") # add pData to track samples
+```
+
+We now have the raw data, red and green intensities which we have access to:
+```{r}
+dim(getRed(rgset))
+dim(getGreen(rgset))
+```
+
+```{r}
+# library(BiocManager)
+# options(repos = BiocManager::repositories())
+# BiocManager::repositories()
+# 
+# packageVersion("matrixStats")
+# 
+# install.packages("remotes")
+# remotes::install_version("matrixStats", version = "0.63.0", repos = "https://cran.rstudio.com")
+# 
+# packageVersion("matrixStats")
+```
+
+If you are not interested in developing preprocessing algorithms then you can use the built in preprocessing algorithm and go straight to an object that give you access to methylation estimates:
+
+```{r}
+mset <- preprocessIllumina(rgset) # Red&Green info to methylation estimates
+```
+
+This performs the default preprocessing algorithm developed by Illumina. However, for this to be useful, we want to have the locations of each CpG, and to do that we need map the CpGs to genome. minfi keeps this information modular so that when the genome annotation gets updated, one can easily change the mapping. 
+```{r}
+mset <- mapToGenome(mset)
+```
+
+Now we are ready to obtain the methylation values and CpG locations.
+ 
+```{r}
+dim(getBeta(mset,type="Illumina")) ##the argument type="Illumina" gives us default procedure
+# 6 samples, 485512 CpGs
+head(granges(mset))
+```
+
+We can also use functions such as `getSex` and `getQC` on the mset object:
+```{r}
+colData(mset)<-getSex(mset)
+plotSex(mset)
+plot(as.matrix(getQC(mset)))
+```
+
+## Reading Raw 450K Array Data Assessment
+
+### Reading Raw 450K Array Data Assessment Q1
+
+For this assessment you will need to install the following packages:
+
+```{r}
+BiocManager::install(c("minfi",
+                       "IlluminaHumanMethylation450kmanifest",
+                       "IlluminaHumanMethylation450kanno.ilmn12.hg19"))
+```
+
+You will also need to download some raw data from this link. These are idat files produced by the Illumina 450K DNA methylation array, which is one of the most widely used technologies for the measurement of DNA methylation. You should download all of the files in this directory to a directory on your machine. (You can also download the entire repository by clicking "Download Zip" here. Note that this will be ~100 Mb.)
+
+The first step to loading the data is to determine the basename of the idat files you have just downloaded. Note that for each sample we have two files: one each for the red and green channels. If you determine the path correctly and type this:
+
+```{r}
+path <- "/Users/iha-eun/Desktop/HarvardX/02. Case Studies in Functional Genomics/Section 2_DNA methylation/idats" 
+list.files(path)
+```
+
+you should see a list of idat files and one csv file (targets.csv).
+
+Let's start by reading in the csv file which contains clinical information. This has one row for each sample and one of the columns includes the "basenames" for the files:
+
+```{r}
+targets <- read.csv(file.path(path,"targets.csv"),as.is=TRUE)
+names(targets)
+targets$Basename
+```
+
+How many cancer samples are included in this dataset?
+
+```{r}
+sum(targets$Status == "cancer")
+```
+
+### Reading Raw 450K Array Data Assessment Q2
+
+To make this script work in any working directory we can edit that column to contain the absolute paths.
+
+```{r}
+targets$Basename <- file.path(path,targets$Basename)
+```
+
+Then we are ready to read in the raw data with the read.metharray() function:
+
+```{r}
+library(minfi)
+rgset <- read.metharray(targets$Basename,verbose=TRUE)
+rownames(targets) <- sampleNames(rgset)
+targets <- as(targets, "DataFrame")
+pData(rgset) <- targets
+```
+
+We now have the raw data, and we have access to red and green intensities:
+
+```{r}
+dim(getRed(rgset))
+dim(getGreen(rgset))
+```
+
+If you are not interested in developing preprocessing algorithms then you can use the built in preprocessing algorithm and go straight to object that give you access to methylation estimates:
+
+```{r}
+mset <- preprocessIllumina(rgset)
+```
+
+This performs the default preprocessing algorithm developed by Illumina. However, for this to be useful we want to have the locations of each CpG and to do that we need map the CpGs to genome. minfi keeps this information modular so that when the genome annotation gets updated one can easily change the mapping.
+
+```{r}
+mset <- mapToGenome(mset)
+```
+
+Now we are ready to obtain the methylation values and CpG locations.
+
+```{r}
+dim(getBeta(mset,type="Illumina")) ##the argument type="Illumina" gives us default procedure
+head(granges(mset))
+```
+
+If we use the Illumina approach to estimating methylation values, what is the estimated level of methylation for the CpG at location 153807318 on chr4 for sample "5775041068_R04C01"?
+
+```{r}
+ind = which(ranges(rowRanges(mset)) == "153807318")
+getBeta(mset,type="Illumina")[ind,"5775041068_R04C01"]
+
+# OR
+i <- which(seqnames(granges(mset))=="chr4" & start(granges(mset))==153807318)
+j <- which(rownames(pData(mset))=="5775041068_R04C01")
+getBeta(mset,type="Illumina")[i,j]
+```
+
+### Reading Raw 450K Array Data Assessment Q3
+
+```{r}
+#Load the bumphunter package:
+library(bumphunter)
+
+# Check the class of the mset object from above:
+class(mset)
+  
+# The bumphunter() function needs one of the following classes:
+showMethods("bumphunter")
+
+# We need to convert mset to a GenomicRatioSet using the following command:
+grset <- ratioConvert(mset,what="beta",type="Illumina")
+
+# Read the help file for the bumphunter() method:
+help("bumphunter,GenomicRatioSet-method")
+
+```
+
+Find DMRs between cancer and normal samples
+
+```{r}
+res = bumphunter(grset, model.matrix(~pData(grset)$Status), cutoff=0.1)
+```
+
+### Reading Raw 450K Array Data Assessment Q4
+
+What is the "area" of the first DMR listed in the DMR table returned by bumphunter()?
+
+```{r}
+res$table[1,"area"]
+```
+
+### Reading Raw 450K Array Data Assessment Q5
+
+The default behavior for bumphunter() is not to smooth the data. Here we will learn how to run bumphunter() with smoothing. However to make the code run faster we will only run it on chr22. To do this, we first subset grset:
+
+```{r}   
+index <- which(seqnames(grset)=="chr22")
+grset2 <- grset[index,]
+
+# Now we run bumphunter() without smoothing:
+library(bumphunter)
+X <- model.matrix(~pData(grset2)$Status)
+res <- bumphunter(grset2,X,cutoff=0.25)
+
+# Now we run it with smoothing:
+res2 <- bumphunter(grset2,X,cutoff=0.25,smooth=TRUE) # To use smoothing we change the smooth argument to TRUE.
+```
+
+The smoothing occurs in clusters of locations that are ‘close enough’. This gives us an estimate of a genomic profile that is 0 when uninteresting.
+
+Which best characterizes the difference between the DMRs in res and res2?
+
+res has more DMRs and res2 has longer DMRs.
+
+```{r}
+library(data.table)
+setorder(res$table, cols = "start")
+setorder(res2$table, cols = "start")
+
+head(res)
+head(res2)
+
+nrow(res$table)    # number of regions in res
+mean(res$table$L)    # mean length of regions in res
+nrow(res2$table)    # number of regions in res2
+mean(res2$table$L)    # mean length of regions in res2
+```
+
+
+
+
+
+
+

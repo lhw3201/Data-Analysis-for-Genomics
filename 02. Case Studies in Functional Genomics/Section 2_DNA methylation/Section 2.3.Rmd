@@ -1,0 +1,1090 @@
+---
+title: 'Section 2.3: Data Analysis and Integration'
+author: "Haeun Lee"
+date: "2026-02-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Data Analysis and Integration
+## Downloading Data
+
+To complete this week's assessments, we will be analyzing a much larger dataset than what we considered in the previous sections. We will be using a subset of the methylation data available from The Cancer Genome Atlas project (TCGA). This is not a toy example, but rather a dataset similar to those being analyzed in academic research labs. We have created a GitHub repository External link with all the data. You can download a ZIP External link file here. The file is 801 MB in size, so even on a fast internet connection it will take several minutes to download. We recommend you start downloading the file before you engage in the videos and assessments. You will need to download and unzip this ZIP file to follow the videos and complete the exercises.
+
+In the cell composition assessment, we will be downloading a dataset from GEO directly from R. This can take several minutes depending on the download speed. If you want to start downloading this file ahead of time, here are the lines of code:
+
+```{r}
+library(minfi)
+grset <- getGenomicRatioSetFromGEO("GSE32148")
+```
+
+If you have a slow internet connection, you might want to save this file to disk for future upload.
+```{r}
+##after download  you can save the object like this:
+save(grset,file="grset.rda")
+##then to load later
+load("grset.rda")
+```
+
+## Inference for DNA Methylation
+## Inference For DNA Methylation In R
+
+	1.	What bumphunter is doing
+	2.	Why permutation is needed
+	3.	What the cutoff means
+	4.	What p-value means in this context
+	5.	What FWER means (and why it’s more conservative)
+
+⸻
+
+1️⃣ What problem are we solving?
+
+We’re trying to find:
+
+Regions of the genome where methylation differs between lung and colon samples.
+
+Not single CpGs — but continuous stretches of CpGs that move together.
+
+These are called:
+
+👉 Differentially Methylated Regions (DMRs)
+👉 Or “bumps” in bumphunter
+
+⸻
+
+2️⃣ What bumphunter does (conceptually)
+
+Step-by-step:
+
+Step 1: Fit a model at each CpG
+
+You compare lung vs colon at every CpG.
+
+This gives:
+	•	A coefficient (difference in methylation)
+	•	Some CpGs positive, some negative
+
+⸻
+
+Step 2: Apply a cutoff (the “buffer”)
+
+He uses cutoff = 0.1.
+
+This means:
+
+Ignore small differences (< 0.1 methylation difference).
+Only consider CpGs with larger differences.
+
+This avoids calling tiny biological differences “real”.
+
+⸻
+
+Step 3: Find consecutive CpGs that pass cutoff
+
+If multiple nearby CpGs exceed cutoff in the same direction:
+
+That becomes a candidate “bump”.
+
+Example:
+
+CpG1   0.15
+CpG2   0.18
+CpG3   0.22
+CpG4   0.02   ← below cutoff (stop)
+
+The first 3 CpGs form a bump.
+
+⸻
+
+Step 4: Summarize each bump
+
+For each bump, compute:
+	•	Length = number of CpGs
+	•	Height = average methylation difference
+	•	Area = sum of CpG differences
+
+Area is the default summary statistic.
+
+⸻
+
+3️⃣ Why permutation is needed
+
+If you scan thousands of CpGs, some regions will look big just by chance.
+
+So we ask:
+
+If there were NO real lung vs colon difference,
+how big would bumps look just by random noise?
+
+To simulate this:
+	1.	Shuffle lung/colon labels
+	2.	Rerun the entire bump search
+	3.	Record biggest bumps
+	4.	Repeat 1000 times
+
+This creates a null distribution.
+
+This tells us what kind of bumps happen by chance.
+
+⸻
+
+4️⃣ What does p-value mean in bumphunter?
+
+For a given bump:
+
+It asks:
+
+Among all bumps found in permuted data,
+how often did we see an area as large as this one?
+
+So if:
+	•	Real bump area = 3.43
+	•	In 1000 permutations, only 2 bumps had area ≥ 3.43
+
+Then:
+
+p = 2/1000 = 0.002
+
+So:
+
+👉 p-value = proportion of permuted bumps as extreme as this one
+
+This is a region-level p-value.
+
+Important:
+This is NOT the usual single-test p-value.
+It’s based on permutation distribution of bump areas.
+
+⸻
+
+5️⃣ What does FWER mean?
+
+FWER = Family-Wise Error Rate
+
+This is stricter.
+
+Instead of comparing your bump to ALL bumps from permutations, it compares to:
+
+👉 The maximum bump area from each permutation
+
+So it asks:
+
+In each permutation, what was the biggest bump?
+How often was that maximum bigger than my bump?
+
+This protects against:
+	•	Multiple testing
+	•	Genome-wide scanning
+
+So:
+
+If in 1000 permutations:
+	•	None had a maximum bump ≥ your bump
+
+Then:
+
+FWER ≈ 0 (really < 1/1000)
+
+This is more conservative because it controls:
+
+Probability of making ANY false positive in the entire genome.
+
+⸻
+
+6️⃣ Why FWER is more conservative than p-value
+
+p-value:
+	•	Compares to distribution of all bumps
+
+FWER:
+	•	Compares to distribution of the largest bump in each permutation
+
+Since maximum values are always larger,
+FWER is harder to pass.
+
+⸻
+
+7️⃣ Why p-values sometimes show 0
+
+If:
+	•	1000 permutations were run
+	•	None exceeded your bump
+
+Then the estimate is 0
+
+But really it means:
+
+p < 1/1000
+
+It’s limited by number of permutations.
+
+More permutations → smaller possible minimum p-value.
+
+⸻
+
+8️⃣ Why they use 1000 permutations
+
+Because:
+
+Minimum nonzero p-value = 1 / number_of_permutations
+
+If 1000 permutations:
+
+Smallest possible p-value = 0.001
+
+If 10,000 permutations:
+
+Smallest possible = 0.0001
+
+⸻
+
+9️⃣ Area vs (Length + Height)
+
+Two summary methods:
+
+Area (default)
+
+Area = sum of methylation differences
+
+Captures:
+	•	both strength and length
+
+But:
+	•	Very long weak bumps can appear significant
+
+⸻
+
+Length + Height (2D summary)
+
+Controls for:
+	•	Avoiding very long but shallow bumps
+
+More complex, but balances size and strength.
+
+⸻
+
+🔟 Big picture summary
+
+What bumphunter is doing:
+	1.	Find regions where methylation difference exceeds cutoff
+	2.	Summarize each region
+	3.	Shuffle sample labels many times
+	4.	See how often such regions appear by chance
+	5.	Assign:
+	•	p-value
+	•	FWER
+
+⸻
+
+🧠 One-sentence summary
+
+The p-value in bumphunter tells you how often a bump of this size appears by chance, while FWER tells you how often a bump this large would appear anywhere in the genome by chance — making FWER more conservative.
+
+⸻
+
+```{r}
+library(IlluminaHumanMethylation450kmanifest) ##Bioc
+# install.packages("doParallel")
+library(doParallel) ##CRAN
+library(pkgmaker)
+library(rafalib)
+```
+
+```{r}
+path="/Users/iha-eun/Desktop/HarvardX/02. Case Studies in Functional Genomics/Section 2_DNA methylation/tcgaMethylationSubset-master"
+targets=read.delim(file.path (path,"targets.txt"),as.is=TRUE)
+table(targets$Tissue,targets$Status)
+```
+
+For illustration we will read in the normal colon and lung
+
+```{r}
+index = which( targets$Status=="normal" & targets$Tissue%in%c("colon","lung") )
+targets = targets[index,]
+```
+
+```{r}
+dat = read.metharray.exp(base=path,targets = targets, verbose=TRUE)
+dat = preprocessIllumina(dat)
+dat = mapToGenome(dat)
+dat = ratioConvert(dat,type="Illumina")
+```
+
+```{r}
+library(doParallel)
+detectCores()
+registerDoParallel(cores = 4)
+```
+
+```{r}
+tissue = pData(dat)$Tissue
+X = model.matrix(~tissue)
+index = which(seqnames(dat)=="chr22")
+dat = dat[index,] ## for illustrative purposes
+res = bumphunter(dat,X,cutoff=0.1,B=1000) # 1000 times permutations
+head(res$tab)
+```
+
+
+```{r,message=FALSE}
+library(rafalib)
+library(AnnotationHub)
+cgi = AnnotationHub()[["AH5086"]]
+```
+
+```{r}
+tab = res$tab[res$tab$fwer <= 0.05,] # filter significant DMRs only
+tab = makeGRangesFromDataFrame(tab,keep.extra.columns = TRUE)
+
+map = distanceToNearest(tab,cgi) # distance between DMR to nearest CpG island
+d = mcols(map)$distance
+prop.table( table( cut(as.numeric(d),c(0,1,2000,5000,Inf),include.lowest=TRUE,right=FALSE) )) # many regions do not intersect the island, but located before or after 2000 bp = CpG shores (+2000 bp = CpG shelves)
+
+null =  granges(dat)
+nulltab = makeGRangesFromDataFrame(null,keep.extra.columns = TRUE)
+nullmap=distanceToNearest(nulltab,cgi) # distance between all CpG to nearest CpG island
+nulld = mcols(nullmap)$distance
+prop.table( table( cut(nulld,c(0,1,2000,5000,Inf),include.lowest=TRUE,right=FALSE) ))
+```
+
+Why are we comparing the distance distribution of DMRs to CpG islands with the distance distribution of all CpGs?
+
+That comparison is the key to detecting enrichment.
+
+Let’s break this down clearly and intuitively.
+
+⸻
+
+🎯 What are we trying to learn?
+
+After running bumphunter, we found:
+
+👉 Differentially methylated regions (DMRs)
+
+Now we want to know:
+
+Where in the genome do these DMRs tend to occur?
+
+Specifically:
+	•	Inside CpG islands?
+	•	Near CpG islands (shores)?
+	•	Far away (open sea)?
+
+⸻
+
+🧬 Step 1: Compute distances of DMRs to CpG islands
+
+This part:
+
+map=distanceToNearest(tab,cgi)
+d = mcols(map)$distance
+
+For each DMR, it finds:
+
+👉 distance to nearest CpG island
+
+Then this line:
+
+prop.table(table(cut(as.numeric(d), ...)))
+
+Groups distances into bins:
+
+Bin	Meaning
+[0,1)	inside island
+[1,2000)	within 2kb (shore)
+[2000,5000)	shelf
+[5000,Inf]	open sea
+
+And computes proportions.
+
+You got:
+
+DMRs:
+[0,1)            0.3039
+[1,2000)         0.2990
+[2000,5000)      0.1667
+[5000,Inf]       0.2304
+
+So:
+	•	30% in islands
+	•	30% in shores
+	•	17% shelves
+	•	23% open sea
+
+⸻
+
+🧠 Step 2: But is that meaningful?
+
+This is the critical question.
+
+If 30% are in islands — is that:
+	•	High?
+	•	Low?
+	•	Expected?
+
+We don’t know unless we compare to baseline.
+
+⸻
+
+🧬 Step 3: Compute baseline distribution (all CpGs)
+
+Now we compute the same distances for:
+
+👉 All CpGs measured in the array
+
+nullmap = distanceToNearest(nulltab, cgi)
+nulld = mcols(nullmap)$distance
+prop.table(table(cut(nulld, ...)))
+
+You got:
+
+All CpGs:
+[0,1)            0.4169
+[1,2000)         0.2658
+[2000,5000)      0.1460
+[5000,Inf]       0.1713
+
+So:
+	•	42% of all CpGs are in islands
+	•	27% in shores
+	•	15% shelves
+	•	17% open sea
+
+⸻
+
+🚨 Now comes the important comparison
+
+Region	DMRs	All CpGs
+Island	30%	42%
+Shore	30%	27%
+Shelf	17%	15%
+Open sea	23%	17%
+
+
+⸻
+
+🎯 What does this show?
+
+DMRs are LESS common in islands than expected
+	•	Expected ~42%
+	•	Observed ~30%
+
+DMRs are MORE common in shores
+	•	Expected ~27%
+	•	Observed ~30%
+
+And also slightly enriched in open sea.
+
+⸻
+
+🧠 Why this comparison is necessary
+
+If you only looked at:
+
+30% of DMRs are in islands
+
+You might think:
+
+“Wow, many are in islands!”
+
+But that’s misleading because:
+
+👉 42% of all CpGs are in islands anyway.
+
+So actually:
+
+DMRs are UNDER-represented in islands.
+
+This is why we need the baseline.
+
+⸻
+
+🔬 Biological interpretation
+
+This confirms a known biological pattern:
+
+Differential methylation often occurs in:
+
+👉 CpG island shores (within 2kb of islands)
+
+Rather than inside CpG islands themselves.
+
+This was first reported around 2009–2010 and became an important discovery.
+
+⸻
+
+📌 Why he says “this is not exactly right”
+
+He says:
+
+This is not exactly right, because these are just CpGs and not regions.
+
+Why?
+
+Because:
+	•	DMRs are regions (multiple CpGs)
+	•	Baseline is individual CpGs
+	•	Ideally, baseline should be random regions of similar size
+
+But this quick comparison gives a reasonable idea of enrichment.
+
+⸻
+
+🧠 Final intuition
+
+We compare DMRs to all CpGs to answer:
+
+Are DMRs located differently than we would expect by chance?
+
+And the answer here is:
+
+✔ They are depleted in CpG islands
+✔ They are enriched in shores
+
+That’s the biological insight.
+
+⸻
+
+🧾 One sentence summary
+
+We compare DMR distances to all CpG distances to determine whether DMRs are enriched in certain genomic regions beyond what would occur by chance given the CpG distribution on the array.
+
+
+```{r}
+beta = getBeta(dat)
+cols = as.factor(pData(dat)$Tissue)
+
+tab = tab[order(-mcols(tab)$area)]
+tab = tab+3000 ##add 3000 to each side
+mypar(1,1)
+i=17 # Chosen for demo
+dataIndex = which(granges(dat)%over%tab[i]) # entire CpG data within tab[17]
+cgiIndex = which(cgi%over%tab[i]) # find all CpG within tab[17]
+thecgi = cgi[cgiIndex]
+    
+pos = start(dat)[dataIndex] # position of CpG in this region
+xlim=range(c(pos,start(thecgi),end(thecgi)) )
+  
+y = beta[dataIndex,] # 16 CpGs, 36 samples in y
+
+# plot original data
+matplot(pos,y,col=as.numeric(cols) , xlim=xlim, ylim=c(0,1),ylab="Methylation")  
+apply(cbind(start(thecgi),end(thecgi)),1,function(x) segments(x[1],0,x[2],0,lwd=4,col=3)) # indicate CpG island
+
+# plot estimated population difference (bumphunter output)
+plot(pos,res$fitted[dataIndex],xlim=xlim,ylim=c(-0.4,0.4))
+abline(h=0)
+apply(cbind(start(thecgi),end(thecgi)),1,function(x) segments(x[1],0,x[2],0,lwd=4,col=3))
+
+```
+
+```{r}
+table(getIslandStatus(dat))
+```
+
+## CpG Island Shores Assessment
+
+We assume you have downloaded the TCGA data methylation dataset in the tcgaMethylationSubset GitHub repo. (~840 MB zip file).
+
+Create a variable named path specifying the path to the folder where you have downloaded this data.
+
+Make sure the following Bioconductor packages are downloaded if you haven't done so already:
+
+```{r}
+library(minfi)
+library(IlluminaHumanMethylation450kmanifest)
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+```
+
+### CpGIslandShores Assessment Q1
+
+Read in the sample annotation table (where path is as described above).
+
+```{r}
+path <- "/Users/iha-eun/Desktop/HarvardX/02. Case Studies in Functional Genomics/Section 2_DNA methylation/tcgaMethylationSubset-master"
+targets <- read.delim(file.path(path, "targets.txt"), as.is=TRUE)
+```
+
+How many samples are represented in this table?
+
+```{r}
+nrow(targets)
+```
+
+### CpGIslandShores Assessment Q2
+
+How many samples are from normal colon samples?
+
+```{r}
+sum(targets$Status == "normal" & targets$Tissue == "colon")
+```
+
+For the following questions we will perform a differential methylation analysis using normal breast and colon samples from TCGA:
+
+```{r}
+index <- which(targets$Status=="normal" & targets$Tissue%in%c("colon", "breast"))
+targets <- targets[index, ]
+```
+
+Now we are ready to read in the data (this will take about 2 minutes):
+
+```{r}
+library(minfi)
+dat <- read.metharray.exp(base=path, targets=targets, verbose=TRUE)
+```
+
+The dat object includes the raw data. To convert this into an object that includes methylation values, as well as the location of CpGs, we run the following commands:
+
+```{r}
+class(dat) # RGChannelSet
+## preprocess the data
+dat <- preprocessIllumina(dat)
+class(dat) # MethylSet
+## assign locations to each CpG
+dat <- mapToGenome(dat)
+class(dat) # GenomicMethylSet
+## precompute methylation values from U and M values
+dat <- ratioConvert(dat, type="Illumina")
+class(dat) # GenomicRatioSet
+```
+
+Before we start we can create some quality assessment plots. First look at the distribution of each sample:
+
+```{r}
+library(rafalib)
+mypar(1,1)
+## extract methylation values
+y <- getBeta(dat)
+shist(y)
+```
+
+Note that the distributions seem similar. Nothing stands out.
+We also create an MDS plot to search for outlier samples. The first PC splits the data by tissue as expected and no sample stands out as an outlier.
+
+```{r}
+mds <- cmdscale(dist(t(y)))
+tissue <- as.factor(pData(dat)$Tissue)
+plot(mds, col=tissue)
+```
+
+Now we are ready to use statistical inference to find differentially methylated regions. Let's start by using the limma package to perform a site-by-site analysis.
+
+```{r}
+library(limma)
+
+## create design matrix
+tissue = as.factor(pData(dat)$Tissue)
+X = model.matrix(~tissue)
+
+## extract methylation values
+y = getBeta(dat)
+
+## obtain effect sizes and pvals with limma
+fit = lmFit(y,X)
+eb = eBayes(fit)
+```
+
+### CpGIslandShores Assessment Q3
+
+Find the CpG with the largest effect size when comparing the normal breast and colon samples.
+
+Which chromosome is this CpG on? What is the position of this CpG?
+
+```{r}
+max.i = which.max(fit$coefficients[,2])
+seqnames(dat)[max.i]
+start(dat)[max.i]
+```
+
+### CpGIslandShores Assessment Q4
+
+Now we will use the qvalue() function to determine the q-value for the CpG found in the previous question.
+
+```{r}
+library(qvalue)
+
+## obtain q-values
+qvals <- qvalue(eb$p.value[,2])$qvalue
+```
+
+What is the q-value for this CpG?
+
+```{r}
+-log10(qvals[max.i])
+```
+
+### CpGIslandShores Assessment Q5
+
+Find all the CpGs within 5000 basepairs of the CpG identified in the previous question. Create a plot showing the methylation values across all of the samples at these CpGs. Use color to distinguish breast from colon samples. Additionally, create plots of the estimated effect sizes and the -log10(q-values) along these CpG sites. You should have a total of three plots.
+
+Based on these plots, which best describes this region?
+A region of about 1000 base pairs appears to be different.
+
+```{r}
+cg22365276 = dat[max.i]
+gr = granges(cg22365276) + 5000
+dataIndex = which(granges(dat)%over%gr) # all CpGs within gr
+
+pos = start(dat)[dataIndex]
+
+y = getBeta(dat) # methylation values
+cols = as.factor(pData(dat)$Tissue)
+  
+matplot(pos, y[dataIndex,], col=as.numeric(cols), ylab="Methylation")  
+
+plot(pos,eb$coefficients[dataIndex,2])
+abline(h=0)
+
+plot(pos,-log10(qvals[dataIndex]))
+```
+
+### CpGIslandShores Assessment Q6
+
+Repeat the above exercise for the top 10 CpGs ranked by absolute value of the effect size and identified with the following code:
+
+```{r}
+o <- order(abs(fit$coef[,2]), decreasing = TRUE)[1:10]
+
+pos = start(dat)[o]
+
+y = getBeta(dat) # methylation values
+cols = as.factor(pData(dat)$Tissue)
+  
+matplot(pos, y[o,], col=as.numeric(cols), ylab="Methylation")  
+
+plot(pos,eb$coefficients[o,2])
+abline(h=0)
+
+plot(pos,-log10(qvals[o]))
+```
+
+How would you describe these plots?
+For most plots we see groups of CpGs that are differentially methylated.
+
+### CpGIslandShores Assessment Q7
+
+Now we are going to explicitly search for regions using the bumphunter() function. We will use permutation to assess statistical significance. Because the function is slow, we will restrict our analysis to chromosome 15.
+
+```{r}
+index <- which(seqnames(dat)=="chr15")
+dat2 <- dat[index,]
+```
+
+If your computer has more than one core, you can use parallel computing to speed up the procedure.
+
+```{r}
+library(doParallel)
+ncores <- detectCores()
+registerDoParallel(cores = ncores)
+```
+
+We can now run the bumphunter() function to find differentially methylated regions (DMRs). For this assessment question we will use 100 permutations, although we recommend more in practice. Here we will use a cutoff of 0.1. The permutations are random so make sure you set the seed to 1 to obtain exact results in the assessment question.
+
+```{r}
+##create design matrix
+tissue <- as.factor(pData(dat)$Tissue)
+X <- model.matrix(~tissue)
+
+##extract methylation values
+set.seed(1)
+res <- bumphunter(dat2,X,cutoff=0.1,B=100)
+head(res$tab)
+```
+
+According to these results, how many regions achieve an FWER lower than 0.05?
+
+```{r}
+sum(res$table$fwer <= 0.05)
+```
+
+### CpGIslandShores Assessment Q8
+
+Previously we performed a CpG by CpG analysis and obtained qvalues. Create an index for the CpGs that achieve qvalues smaller than 0.05 and a large effect size larger than 0.5 (in absolute value):
+
+```{r}
+##fit and qvals were defined in a previous answer
+index <- which(qvals < 0.05 & abs(fit$coef[,2]) > 0.5 & seqnames(dat)=="chr15")
+```
+
+Now create a table of the DMRs returned by bumphunter that had 3 or more probes and convert the table into GRanges:
+
+```{r}
+tab <- res$tab[res$tab$L >= 3,]
+tab <- makeGRangesFromDataFrame(tab)
+```
+
+What proportion of the CpGs indexed by index are inside regions found in tab?
+
+```{r}
+length(findOverlaps(dat[index,],tab))/length(index)
+```
+
+### CpGIslandShores Assessment Q9
+
+Now download the table of CpG islands using AnnotationHub.
+
+```{r}
+library(AnnotationHub)
+cgi <- AnnotationHub()[["AH5086"]]
+```
+
+Now we create a GRanges object from the list of DMRs we computed in the previous questions:
+
+```{r}
+tab <- res$tab[res$tab$fwer <= 0.05,]
+tab <- makeGRangesFromDataFrame(tab)
+```
+
+What proportion of the regions represented in tab do not overlap islands, but overall CpG islands shores (within 2000 basepairs) ?
+
+```{r}
+map = distanceToNearest(tab,cgi) # distance between DMR to nearest CpG island
+d = mcols(map)$distance
+mean(d >0 & d <=2000)
+```
+
+## Accounting for Cell Composition
+
+🧬 Cellular Composition in DNA Methylation Analysis — Summary Notes
+
+1️⃣ Main Problem
+
+Most DNA methylation data comes from bulk tissue, not pure cell types.
+
+Example:
+	•	Whole blood contains:
+	•	CD4 T cells
+	•	CD8 T cells
+	•	B cells
+	•	Granulocytes
+	•	Monocytes
+	•	NK cells
+
+When we measure methylation from blood, we are measuring a mixture of all these cell types.
+
+⸻
+
+2️⃣ Why This Matters
+
+Different cell types have very different DNA methylation profiles.
+
+So:
+
+If the proportion of cell types changes,
+the overall methylation profile changes —
+even if methylation within each cell type stays the same.
+
+⸻
+
+3️⃣ Example: Methylation Appears to Change With Age
+
+In whole blood:
+	•	Older individuals appear to have higher methylation at certain CpGs.
+	•	Clustering shows young vs old samples separate.
+
+This looks like:
+
+“Methylation increases with age.”
+
+But there is an alternative explanation.
+
+⸻
+
+4️⃣ Alternative Explanation: Cell Composition Changes With Age
+
+Sorted (pure) blood cell data shows:
+	•	Each cell type has a unique methylation pattern.
+	•	These patterns are consistent across individuals.
+
+Certain CpGs:
+	•	Highly methylated in granulocytes
+	•	Low methylation in CD4 T cells
+
+If:
+	•	Older people have more granulocytes
+	•	Younger people have more CD4 T cells
+
+Then:
+
+Whole blood methylation will appear to change with age
+even if no methylation change occurs within each cell type.
+
+⸻
+
+5️⃣ Mathematical Idea (Mixture Model)
+
+Whole blood methylation profile =
+
+$ (\text{Cell type 1 profile} \times \text{proportion}) + $
+$ (\text{Cell type 2 profile} \times \text{proportion}) + ... $
+
+Changing only the proportions can recreate the observed differences.
+
+So:
+
+Observed differences = mixture effect
+Not necessarily true epigenetic change
+
+⸻
+
+6️⃣ How to Detect This
+
+There are computational methods to:
+	•	Estimate proportions of each cell type from bulk data
+	•	“Deconvolve” whole blood samples
+	•	Adjust for cell composition in analysis
+
+This is similar to correcting for batch effects.
+
+⸻
+
+7️⃣ Important Consequences
+
+If you do NOT adjust for cell composition:
+
+You may falsely conclude:
+	•	Age causes methylation change
+	•	Disease causes methylation change
+
+When actually:
+	•	The disease or age changes cell proportions
+
+⸻
+
+8️⃣ Broader Impact
+
+This is not just a blood issue.
+
+Other tissues (e.g., brain):
+	•	Different regions have different neuron/glia proportions
+	•	This can create artificial methylation differences
+
+⸻
+
+9️⃣ Key Takeaway
+
+Changes in cell-type proportions can create apparent methylation differences, even when no true methylation change occurs within cell types.
+
+Therefore:
+
+Always consider and adjust for cellular composition in bulk methylation studies.
+
+
+## Cell Composition Assessment
+### Cell Composition Assessment Q1
+To examine the importance of accounting for cellular composition in DNA methylation analysis, we are going to download a GEO dataset used in an analysis of whole blood data.
+
+The minfi package has a function to read data directly from GEO. Run the following commands. Note that this command downloads 64.7 MB of data and can take several minutes, depending on your download speed.
+
+NOTE: Occasionally downloads from GEO fail. If you receive a "cannot open URL" error running the code below, try again in a couple minutes.
+
+```{r}
+library(minfi)
+grset <- getGenomicRatioSetFromGEO("GSE32148")
+```
+
+This creates an object of class:
+```{r}
+class(grset)
+```
+which is quite convenient. Use the function pData to examine the sample information table and determine which column includes the age of the individual.
+
+What is the name of this column?
+
+```{r}
+pData(grset)
+```
+
+## Multi-resolution Analysis
+## Multi-resolution Analysis Assessment
+### Blocks Assessment Q1
+
+We will search for differentially methylated blocks.
+
+```{r}
+library(minfi)
+path <- "/Users/iha-eun/Desktop/HarvardX/02. Case Studies in Functional Genomics/Section 2_DNA methylation/tcgaMethylationSubset-master"
+targets <- read.delim(file.path (path,"targets.txt"),as.is=TRUE)
+index <- which( targets$Tissue=="colon")
+targets <- targets[index,]
+dat <- read.metharray.exp(base=path, targets=targets, verbose=TRUE)
+```
+
+The dat object again includes the raw data. To convert this into an object that includes methylation values, as well as the location of CpGs, we run the following lines of code:
+
+```{r}
+dat <- preprocessIllumina(dat)
+dat <- mapToGenome(dat)
+```
+
+Now we can collapse the data as described in the video:
+```{r}
+cdat <- cpgCollapse(dat)
+```
+
+The original data includes nrow(dat) CpGs.
+
+How many regions are represented in the collapsed object?
+
+```{r}
+nrow(dat)
+class(cdat)
+nrow(cdat$object)
+```
+
+### Blocks Assessment Q2
+
+We can see the type of regions that are represented in this collapsed object:
+
+```{r}
+head(granges(cdat$obj))
+```
+
+Note that this information is included in the type column.
+
+What proportion of the regions are OpenSea regions?
+
+```{r}
+mean(granges(cdat$obj)$type == "OpenSea")
+```
+
+### Blocks Assessment Q3
+
+Now we use the blockFinder() function to find differentially methylated regions between cancer and normal:
+
+```{r}
+status <- factor(pData(cdat$obj)$Status,
+                 level=c("normal","cancer"))
+X <- model.matrix(~status)
+res <- blockFinder(cdat$obj,X,cutoff=0.05)
+```
+
+Since blockFinder() calls bumphunter(), the returned results should look familiar. We can take a peek at the blocks:
+
+```{r}
+head(res$table)
+```
+
+What proportion of the blocks reported in res$table are hypomethyated in cancer (lower methylation in cancer versus normal)?
+
+```{r}
+mean(res$table$value <0)
+```
+
+```{r}
+tab=makeGRangesFromDataFrame(res$table)
+index=which(granges(cdat$obj)%over%(tab[1]+10000))
+pos=start(cdat$obj)[index]
+col=as.numeric(status)
+matplot(pos,getBeta(cdat$obj)[index,],col=col,pch=1,cex=0.5)
+##and these are the estimated difference
+plot(pos,res$fitted[index])
+```
+
+
+
+
+
