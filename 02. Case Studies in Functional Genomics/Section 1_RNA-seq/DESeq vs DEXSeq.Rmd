@@ -1,0 +1,231 @@
+---
+title: "DESeq vs DEXSeq"
+author: "Haeun Lee"
+date: "2026-02-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+DESeq2 and DEXSeq are closely related (DEXSeq actually builds on DESeq2 machinery), but they answer different biological questions and fit different models.
+
+⸻
+
+# What DESeq2 Does
+
+Biological question
+
+Is the overall gene expression level different between conditions?
+
+It tests:
+
+Gene A (total counts across all exons)
+Condition 1 vs Condition 2
+
+Unit of analysis:
+
+🧬 Gene
+
+Data structure:
+
+genes × samples
+
+Model (simplified):
+
+\log(\mu_{ij}) = \beta_0 + \beta_1 \cdot condition_j
+
+Where:
+	•	i = gene
+	•	j = sample
+
+Output:
+	•	log2 fold change per gene
+	•	Wald test p-values
+	•	adjusted p-values
+
+⸻
+
+# What DEXSeq Does
+
+Biological question
+
+Is the relative exon usage within a gene different between conditions?
+
+It tests:
+
+Within Gene A:
+Is exon 2 used differently between conditions?
+
+This detects:
+	•	alternative splicing
+	•	exon skipping
+	•	differential transcript structure
+
+⸻
+
+Unit of analysis:
+
+🧬 Exon (within gene)
+
+Data structure:
+
+exons × samples
+
+BUT crucially:
+Exons are modeled relative to their gene.
+
+⸻
+
+# The Core Statistical Difference
+
+This is the key distinction.
+
+⸻
+
+DESeq2 model (gene-level)
+
+For each gene:
+
+count_{gene} \sim condition
+
+Simple.
+
+⸻
+
+DEXSeq model (exon-level interaction model)
+
+For each exon:
+
+count_{exon} \sim sample + exon + condition:exon
+
+The important term is:
+
+condition:exon
+
+That interaction tests:
+
+Does this exon behave differently across conditions relative to other exons in the same gene?
+
+This is not testing total expression.
+It tests proportion usage changes.
+
+⸻
+
+# What DEXSeq is Really Testing
+
+DEXSeq controls for overall gene expression automatically.
+
+Even if:
+	•	the whole gene doubles in expression
+
+DEXSeq will NOT call it significant
+unless:
+	•	exon usage proportions change.
+
+⸻
+
+# Pipeline Differences
+
+DESeq2 pipeline:
+
+dds <- DESeq(dds)
+res <- results(dds)
+
+Internally:
+	•	estimate size factors
+	•	estimate dispersions
+	•	fit NB GLM
+	•	Wald test
+
+⸻
+
+DEXSeq pipeline:
+
+dxd <- estimateSizeFactors(dxd)
+dxd <- estimateDispersions(dxd)
+dxd <- testForDEU(dxd)
+dxd <- estimateExonFoldChanges(dxd)
+
+Internally:
+	•	same NB framework
+	•	but larger design matrix
+	•	exon-level interaction model
+	•	likelihood ratio test (LRT), not Wald test
+
+⸻
+
+# Statistical Test Type
+
+Method	Default Test
+DESeq2	Wald test
+DEXSeq	Likelihood ratio test
+
+DEXSeq compares:
+
+full model (with exon:condition interaction)
+vs
+reduced model (without interaction)
+
+
+⸻
+
+# Interpretation Difference
+
+DESeq2 significant gene:
+
+“Gene is upregulated”
+
+DEXSeq significant exon:
+
+“Exon usage changed”
+→ alternative splicing event
+
+The gene might not be DE at all.
+
+⸻
+
+# Data Scale Difference
+
+DESeq2:
+	•	~20,000 genes
+
+DEXSeq:
+	•	~200,000+ exons
+	•	much heavier computation
+
+⸻
+
+# When to Use Which
+
+Question	Tool
+Is gene expression different?	DESeq2
+Is alternative splicing different?	DEXSeq
+Both?	Run both separately
+
+
+⸻
+
+# Conceptual Summary
+
+DESeq2:
+
+Tests vertical change (expression amount)
+
+DEXSeq:
+
+Tests horizontal change (internal exon structure)
+
+⸻
+
+DEXSeq uses DESeq2’s:
+	•	size factor estimation
+	•	dispersion estimation
+	•	NB model framework
+
+But wraps them in a different design and hypothesis test.
+
+⸻
+

@@ -1,0 +1,159 @@
+---
+title: "Section 1.6: Verified Assessment: RNA-seq"
+author: "Haeun Lee"
+date: "2026-02-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Verified Assessment: RNA-seq
+
+This assessment will evaluate your understanding of RNA-seq analysis principles and walk you through an analysis of a public RNA-seq dataset. This assessment consists of two parts.
+
+Part 1: conceptual questions. You will not need to run any code to answer these questions.
+Part 2: analysis questions. You will analyze data from the parathyroidSE Bioconductor package in R.
+
+Like all end-of-section assessments, this assessment is available to verified certificate learners only.
+The assessment questions begin on the following page.
+
+## RNA-seq Assessment Part 1
+### Q1: Expected counts per transcript
+### Q2: FASTQ format
+### Q3: FASTQC
+### Q4: STAR genome alignment
+
+Suppose you have two FASTQ files containing paired-end reads for a single sample with the following names:
+
+FASTQ files:sampleA_1.fastq, sampleA_2.fastq
+
+Each file contains reads of length 101 bp.
+
+You want to align all of the reads that map to chromosome 22. You download the following genome FASTA and GTF files:
+
+FASTA file: Homo_sapiens.GRCh38.98.chr22.fa
+GTF file: Homo_sapiens.GRCh38.98.chr22.gtf`
+
+```
+STAR --runMode genomeGenerate \
+    --genomeDir GRCh38.98.chr22 \
+    --genomeFastaFiles Homo_sapiens.GRCh38.98.chr22.fa \
+    --sjdbGTFFile Homo_sapiens.GRCh38.98.chr22.gtf \
+    --sjdbOverhang 100
+    
+STAR --runThreadN 12 \
+    --genomeDir GRCh38.98.chr22 \
+    --readFilesIn sampleA_1.fastq sampleA_2.fastq
+```
+
+### Q6: RSEM
+- --rsem-prepare-reference requires a GTF file subsetted to exons as an input argument.
+- RSEM gives a probabilistic estimate of the likelihood a read arose from a given transcript.
+
+## RNA-seq Assessment Part 2
+The parathyroidSE library contains RNA-seq data from primary parathyroid tumor cells, originally published by Haglund et al., 2012. Cells were treated with drugs that affect the estrogen receptor (ER) to better understand the role of ER signaling in parathyroid disease.
+
+The parathyroidGenesSE SummarizedExperiment object contains gene level counts for primary parathyroid tumor cells from 4 patients (patient), 3 different treatments (treatment), and 2 different time points (time).
+
+We will inspect a subset of the experiment from the 48h time point to compare cells treated with DPN (an ER- selective agonist) to control cells. Abbreviate this dataset as pth.
+```{r}
+library(parathyroidSE)
+data(parathyroidGenesSE)
+pth <- parathyroidGenesSE    # abbreviate
+pth <- pth[, pth$time == "48h" & pth$treatment != "OHT"]    # remove 24h and OHT samples
+pth
+```
+
+Define a DESeqDataSet with the design ~ patient + treatment. Call the resulting object dds:
+```{r}
+library(DESeq2)
+dds <- DESeqDataSet(pth, design = ~ patient + treatment)
+```
+
+We need to do one last bit of cleanup before analysis: two of the columns are technical replicates of the same sample. We can collapse these replicates, combining reads from the two runs, into a single sample and store the resulting DESeqDataSeq as dds_coll:
+```{r}
+dds_coll <- collapseReplicates(dds, groupby = dds$sample, run = dds$run)
+```
+
+### Q7: Size factors
+
+Calculate the size factors for samples in dds_coll.
+
+What is the size factor for the first sample, "SRS308866"?
+```{r}
+dds_coll <- estimateSizeFactors(dds_coll)
+dds_coll$sizeFactor[1] # OR: sizeFactors(dds_coll)[1]
+which.max(dds_coll$sizeFactor)
+```
+
+### Q8: PCA plot
+
+Use rlog() to perform a regularized log transformation on dds_coll, then make a PCA plot of the transformed data using plotPCA(). The samples should cluster by patient.
+
+What percent of the variance is represented by the first principal component (PC1)?
+```{r}
+rld <- rlog(dds_coll)
+plotPCA(rld,intgroup="patient")
+```
+
+### Q9: DESeq differential expression
+
+Use DESeq() to perform differential expression analysis on dds_coll and use summary() on the results to determine the number of differentially expressed genes.
+
+How many genes are upregulated (LFC > 0) at a FDR of 0.1? 104
+How many genes are downregulated (LFC < 0) at a FDR of 0.1? 132
+How many genes have counts which are too low to calculate differential expression? 20595
+```{r}
+dds_coll <- DESeq(dds_coll)
+res <- results(dds_coll)
+summary(res)
+```
+
+### Q10: Top differentially expressed gene
+What is the ENSEMBL ID of the gene with the lowest adjusted p-value?
+```{r}
+rownames(dds_coll[which.min(res$padj)])
+```
+
+What is the log2 fold change in expression of this gene in DPN-treated samples versus controls?
+```{r}
+res["ENSG00000044574",] # OR res[which.min(res$padj),"log2FoldChange"]
+```
+
+### Q11: MA plot
+
+Create an MA plot of the genes in the dataset. (You can also answer the questions or verify your responses by manually filtering the results table.)
+
+```{r}
+plotMA(res)
+
+# check answers manually
+res[res$padj < 0.1 & !is.na(res$padj) & res$log2FoldChange > 2,]
+res[res$padj < 0.1 & !is.na(res$padj) & res$log2FoldChange < -2,]
+res[res$padj < 0.1 & !is.na(res$padj) & res$baseMean < 1e2,]
+res[res$padj < 0.1 & !is.na(res$padj) & res$baseMean > 1e5,]
+```
+
+### Q12: Plotting counts for an individual gene
+
+Use plotCounts() and ggplot2 to visualize counts for the gene with the lowest adjusted p-value. Your x-axis should be the treatment type, your y-axis should be the count, and the point shape should be the patient.
+
+Which of these is the correct plot for the gene with the lowest adjusted p-value?
+
+```{r}
+data <- plotCounts(dds_coll, gene = which.min(res$padj), intgroup = c("treatment","patient"), returnData=TRUE)
+
+ggplot(data, aes(x=treatment, y=count, col=patient, group=patient)) +
+  geom_point() + geom_line() + scale_y_log10() 
+```
+
+
+
+
+
+
+
+
+

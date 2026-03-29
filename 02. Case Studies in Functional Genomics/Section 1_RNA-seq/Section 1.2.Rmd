@@ -1,0 +1,367 @@
+---
+title: "Section 1.2: RNA-seq.RNA-seq alignment"
+author: "Haeun Lee"
+date: "2026-02-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# RNA-seq alignment
+## Downloading FASTQ files
+## First look at a FASTQ file
+FastQ file
+- first line: name for the read
+- second line: nucleotide sequence, (A, C, G, T, or N)
+- third line: +
+- fourth line: quality of the nucleotides in the second line
+
+## FASTQ assessment
+### FASTQ Q1
+Here is the beginning of the file SRR1039508_1.fastq, which contains the first read of the pair for the experiment:
+
+@SRR1039508.1 HWI-ST177:290:C0TECACXX:1:1101:1225:2130/1
+CATTGCTGATACCAANNNNNNNNGCATTCCTCAAGGTCTTCCTCCTTCCCTTACGGAATTACA
++
+HJJJJJJJJJJJJJJ########00?GHIJJJJJJJIJJJJJJJJJJJJJJJJJHHHFFFFFD
+@SRR1039508.2 HWI-ST177:290:C0TECACXX:1:1101:1311:2131/1
+CCCTGGACTGCTTCTTGAAAAGTGCCATCCAAACTCTATCTTTGGGGAGAGTATGATAGAGAT
++
+HJJJJJJJJJJJJJJJJJIIJIGHIJJJJJJJJJJJJJJJJJJJJJJGHHIDHIJJHHHHHHF
+@SRR1039508.3 HWI-ST177:290:C0TECACXX:1:1101:1414:2163/1
+TCGATCCATCGATTGGAAGGCACTGATCTGGACTGTCAGGTTGGTGGTCTTATTTGCAAGTCC
++
+HJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJGJJIGHIJJBGIJCGIAHIJHHHHHHHFFFFF
+
+Here we see three reads, with names, sequence, +, then quality score.
+
+We will try to find the position of the third read using a simple BLAST search to the human genome (build hg19 / GRCh37).
+
+On the [BLAST search](http://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastSearch&BLAST_SPEC=OGP__9606__9558&LINK_LOC=blasthome) page, under Choose Search Set > Database > choose Genome (GRCh37.p13 reference assembly...)
+
+```{r}
+# Bioconductor is also possible
+library(BSgenome.Hsapiens.UCSC.hg19)
+matchPattern("TCGATCCATCGATTGGAAGGCACTGATCTGGACTGTCAGGTTGGTGGTCTTATTTGCAAGTCC", Hsapiens$chr16)
+```
+
+### FASTQ Q2
+
+The first three reads in the second file are as follows:
+
+@SRR1039508.1 HWI-ST177:290:C0TECACXX:1:1101:1225:2130/2
+CAGATGAGGCGTGTTGGCCAGAGAGCCATTGTCAACAGCAGAGATGNNNNNNNNNNNNAATCC
++
+HJJJJJJJJJJHIIIJJJJJJJJJJJJJJJJJJJJJJJHIJIJHII#################
+@SRR1039508.2 HWI-ST177:290:C0TECACXX:1:1101:1311:2131/2
+TACTCCGGAGAACAGATGGGATTCCCTAGGAGACCCTTGAGGGAAAAGGGAGCCCCAATCTCT
++
+FJJJJJJJFHEHJJJHIIJJGGIIJJGIIJGJHJJJJJHGIJJIGIHHHHFFFDDDDDDDDDE
+@SRR1039508.3 HWI-ST177:290:C0TECACXX:1:1101:1414:2163/2
+TCGCTCTCTCCGTTTCAGGGAAGCCAGCAAGTCCAGTCCGAGTAATGAAGGGCGGGGAGCAGG
++
+HJJJJJJJJJJJJJJJJJJJIJJJJJJJJJJIJJJJJJFHIJFHJJJJJIHHHFDDDDDDDDD
+
+Align the third read above to the human genome, as we did previously.
+
+Searching with BLAST we get a unique hit, on the minus strand, to chromosome 16:
+Range 1: 72130180 to 72130242
+So the first basepair of the read is the last basepair in the alignment.
+We could also use Bioconductor:
+```{r}
+library(BSgenome.Hsapiens.UCSC.hg19)
+matchPattern(reverseComplement(DNAString("TCGCTCTCTCCGTTTCAGGGAAGCCAGCAAGTCCAGTCCGAGTAATGAAGGGCGGGGAGCAGG")), Hsapiens$chr16)
+```
+Above, we saw two reads of a paired-end fragment both aligning within an exon of a human gene. For organisms with double stranded DNA, genes are annotated to either the + or - strand of the reference genome. For example, DHX38 is annotated to the + strand.
+
+RNA-sequencing can be performed using either a strand-specific or non-specific protocol. When a strand-specific protocol is used, sequenced fragments are only observed from the same strand as the gene. For a gene annotated to the + strand of the reference genome, this means that we will only observe paired alignments to the + strand. This may look like:
+
++ strand: 5' --  [1st read, + strand] ... [2nd read, - strand]  -- 3'
++ strand: 5' --  [2nd read, + strand] ... [1st read, - strand]  -- 3'  
+
+Naturally, when using a strand-specific protocol, each read includes additional information (strandedness) and will lead to improved alignment and analysis. However, many experiments, including the one we are examining are not strand-specific. This means that, for a gene on the + strand, we may (and will) observe, in addition to the above two kinds of paired-end fragments, two more which align to the - strand of the reference genome:
+
+- strand: 5' --  [1st read, - strand] ... [2nd read, + strand]  -- 3'
+- strand: 5' --  [2nd read, - strand] ... [1st read, + strand]  -- 3'
+
+## Quality control with FASTQC
+### Basic Statistics
+### Per base sequence quality
+- Quality along the read
+- Box plot which shows in yellow the middle 50% percent of the quality scores at each position
+
+### Per sequence quality scores
+- Average quality score for each read
+
+### Per base sequence content
+- Percent at each position that we observe a certain letter, so A, C, G, or T
+
+### Per base GC content
+### Per sequence GC content
+- Observed density in red compared to a theoretical density in blue
+
+### Per base N content
+### Sequence Length Distribution
+### Sequence Duplication Levels
+- Red line is percent duplicate relative to unique
+- In RNA-Seq libraries sequences from different transcripts will be present at wildly different levels in the starting population. In order to be able to observe lowly expressed transcripts it is therefore common to greatly over-sequence high expressed transcripts, and this will potentially create large set of duplicates. This will result in high overall duplication in this test, and will often produce peaks in the higher duplication bins. This duplication will come from physically connected regions, and an examination of the distribution of duplicates in a specific genomic region will allow the distinction between over-sequencing and general technical duplication, but these distinctions are not possible from raw fastq files. A similar situation can arise in highly enriched ChIP-Seq libraries although the duplication there is less pronounced. Finally, if you have a library where the sequence start points are constrained (a library constructed around restriction sites for example, or an unfragmented small RNA library) then the constrained start sites will generate huge dupliction levels which should not be treated as a problem, nor removed by deduplication. In these types of library you should consider using a system such as random barcoding to allow the distinction of technical and biological duplicates.
+= In other words, when we were sequencing a smaller part of the genome, it's just the transcriptome, which is a small percent of the genome. And in order, so that we see lowly expressed transcripts some transcripts will be sequenced very highly. So in that sense, we expect there to be some sequence read duplicates. And if you read further it explains that a better check than this is actually to go into a genome browser or a genome viewer and look to see if it's still uniform sequencing along the exon. So along the transcript did we see uniform sequencing even if there are duplicates? Or is it spiky? In which case we'd be worried about technical artifact.
+
+### Overrepresented sequences
+- Possible contamination etc
+
+### Kmer Content
+- kmers that it noticed have spikes at certain places which may tell you more about potential problems
+
+## FASTQC notes
+Other read processing options:
+- Adapter trimming - adapters which are used in the sequencing can sometimes show up in the read sequence, because these adapter sequences are non-genomic, they will therefore cause problems with read alignment. A number of software packages can be used to find and trim away adapters in FASTQ files, see for example Scythe or FASTX-Toolkit.
+- Quality trimming - the 3' end of reads often has lower quality, and some software offers to trim away sequence which would likely interfere with read alignment (given that there is enough remaining 5' sequence for unique alignments). The trade-off between quality trimming vs other methods of error correction is likely specific to the characteristics on individual datasets. See FASTX-Toolkit.
+- Length adjustment - when the length of paired-end fragments is often less than 2 * read length, there can be a benefit from combining overlapping pairs into a single long read. See the description for: FLASH.
+
+## FASTQC assessment
+## Genome alignment with STAR I
+1) generate the genome index to align reads
+- Use genomeGenerate run mode
+- Need to download FASTA files of our reference genome & GTF file, which specifies the locations of the exons for each gene
+  - Examples of acceptable genome sequence files:
+    ENSEMBL: files marked with .dna.primary.assembly
+    ENSEMBL website > Download tab > Download data by FTP > Download both DNA (FASTA) & Gene Sets (GTF) by copying the link and put in the terminal
+    
+## Genome alignment with STAR II
+- Log.final.out: overall mapping result
+- Aligned.out.sam: aligned file
+
+## The SAM file format
+The [SAM](https://samtools.github.io/hts-specs/SAMv1.pdf) format and its compressed version, BAM, contains information about the alignment of sequences to a reference genome.
+
+The header of the Aligned.out.sam file is pasted below:
+
+1) This is the header. Header rows start with @ and provide metadata, such as which program was used for alignment (@PG) or which reference sequence was used (@SQ).
+@PG     ID:STAR PN:STAR VN:STAR_2.3.1z_r395     CL:STAR   --runThreadN 12   --genomeDir GRCh38.79.chrom1   --readFilesIn fastq/SRR1039508_1.fastq   fastq/SRR1039508_2.fastq    cl:STAR --runThreadN 12 --genomeDir GRCh38.79.chrom1 --readFilesIn fastq/SRR1039508_1.fastq fastq/SRR1039508_2.fastq
+@SQ     SN:1    LN:248956422
+
+2) This example contains the first 4 aligned reads from an RNA-seq experiment. There are 11 required fields and several optional fields in each line. We'll explore a subset of the fields, but you can learn more in the SAM documentation section 1.4. Note that the individual lines are long, and in some text editors they will appear to be split on multiple lines.
+SRR1039508.7    163     1       96446974        255     63M     =       96446997        86      CGTAGATTCGGGCAAGTCCACCACTACTGGCCATCTGATCTATAAATGCGGTGGCATCGACAA HJHIJJJJJJJJJJJJJJJIJJJJJJJJIJJJJJJJJJIIJJJJJJJJJJJEHHFFFFDEDDD NH:i:1  HI:i:1  AS:i:110        nM:i:7
+SRR1039508.7    83      1       96446997        255     63M     =       96446974        -86     CTACTGGCCATCTGATCTATAAATGCGGTGGCATCGACAAAAGAACCATTGAAAAATTTGAGA FHHHHHJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJIJJJJJJJJJJJJJJJJJH NH:i:1  HI:i:1  AS:i:110        nM:i:7
+SRR1039508.16   163     1       243426450       255     63M     =       243426495       108     AAGAAAAAAGGTATACATATGATAAATTGGGAAAGTTACAGAGAAGAAATGAAGAATTGGAGG HJJJJJJJJJJAGIJJJIJJJJJJJJJJIJJIIJJHIJFHJIJJIJIJJJJJJJJIJJHHHHG NH:i:1  HI:i:1  AS:i:124        nM:i:0
+SRR1039508.16   83      1       243426495       255     63M     =       243426450       -108    GAAATGAAGAATTGGAGGAACAGTGTGTCCAGCATGGGAGAGTACATGAGACGATGAAGCAAA IJJIGJJJJJIIIJJJJJIIJJJJJJJIJJJJJIGJJIJJJJJIJJJJIJJJJJJJJJJJJJH NH:i:1  HI:i:1  AS:i:124        nM:i:0
+
+3) QNAME, or read name. Reads with the same name come from the same template strand. In this case, these are paired-end reads, so there are two reads with each unique name.
+SRR1039508.7
+
+4) FLAG, which encodes properties of the read. Properties include whether the read is paired, mapped properly, reverse or forward strand, and more. The easiest way to interpret the FLAG is to input the value into a FLAG decoder, such as this tool from the Broad Institute. For example, the value 83 indicates that this read is paired, mapped in a proper pair, from the reverse strand, and the first in its pair.
+163
+
+5) RNAME, or reference sequence name. This read aligns to chromosome 1.
+1
+
+6) genomic position of the first base of the read.
+96446974
+
+7) CIGAR string, which details whether the entire read matches the reference genome or, if not, how the read differs from the reference. It also indicates whether reads span introns. You can learn more in the SAM documentation section 1.4. This CIGAR string (63M) indicates that all 63 bases in this read match the reference.
+63M
+
+8) actual nucleotide sequence of the read.
+CGTAGATTCGGGCAAGTCCACCACTACTGGCCATCTGATCTATAAATGCGGTGGCATCGACAA
+
+9) quality of each base in the read. These ASCII characters can be decoded into numeric values known as Phred scores that state the probability of an incorrect base call at that location.
+HJHIJJJJJJJJJJJJJJJIJJJJJJJJIJJJJJJJJJIIJJJJJJJJJJJEHHFFFFDEDDD
+
+10) There are several optional fields at the end of each line in a TAG:TYPE:VALUE format.
+NH:i:1  HI:i:1  AS:i:110        nM:i:7
+
+
+## Genome alignment assessment
+The first 6 lines of the Aligned.out.sam file is pasted below:
+
+@PG ID:STAR PN:STAR VN:STAR_2.3.1z_r395 CL:STAR --runThreadN 12 --genomeDir GRCh38.79.chrom1 --readFilesIn fastq/SRR1039508_1.fastq fastq/SRR1039508_2.fastq cl:STAR --runThreadN 12 --genomeDir GRCh38.79.chrom1 --readFilesIn fastq/SRR1039508_1.fastq fastq/SRR1039508_2.fastq
+@SQ SN:1 LN:248956422
+SRR1039508.7 163 1 96446974 255 63M = 96446997 86 CGTAGATTCGGGCAAGTCCACCACTACTGGCCATCTGATCTATAAATGCGGTGGCATCGACAA HJHIJJJJJJJJJJJJJJJIJJJJJJJJIJJJJJJJJJIIJJJJJJJJJJJEHHFFFFDEDDD NH:i:1 HI:i:1 AS:i:110 nM:i:7
+SRR1039508.7 83 1 96446997 255 63M = 96446974 -86 CTACTGGCCATCTGATCTATAAATGCGGTGGCATCGACAAAAGAACCATTGAAAAATTTGAGA FHHHHHJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJIJJJJJJJJJJJJJJJJJH NH:i:1 HI:i:1 AS:i:110 nM:i:7
+SRR1039508.16 163 1 243426450 255 63M = 243426495 108 AAGAAAAAAGGTATACATATGATAAATTGGGAAAGTTACAGAGAAGAAATGAAGAATTGGAGG HJJJJJJJJJJAGIJJJIJJJJJJJJJJIJJIIJJHIJFHJIJJIJIJJJJJJJJIJJHHHHG NH:i:1 HI:i:1 AS:i:124 nM:i:0
+SRR1039508.16 83 1 243426495 255 63M = 243426450 -108 GAAATGAAGAATTGGAGGAACAGTGTGTCCAGCATGGGAGAGTACATGAGACGATGAAGCAAA IJJIGJJJJJIIIJJJJJIIJJJJJJJIJJJJJIGJJIJJJJJIJJJJIJJJJJJJJJJJJJH NH:i:1 HI:i:1 AS:i:124 nM:i:0
+
+### Genome align Q1
+@SQ gives the reference sequence 1 length with LN:
+@SQ SN:1 LN:248956422
+
+### Genome align Q2
+Section 1.4 of the SAM documention describes the different fields recorded for each aligned read. One important field is the CIGAR string of an alignment. The CIGAR string tells us how each base of the read aligned to the genome using a combination of numbers and letters. M is used to denote a base match, I for insertion, D for deletion, and N for skipped bases on the reference genome.
+
+CIGAR string is in the 6th column. All reads have the CIGAR string 63M.
+
+According to Section 1.4 of the SAM documentation, the second column of each alignment is a bitwise FLAG value. The FLAG is an integer between 0 and 4095 which encodes 12 binary (yes/no) features of the alignment. The integer FLAG values can be difficult to interpret. A tool like the one available on the [Picard tools] (http://broadinstitute.github.io/picard/explain-flags.html) website External link can be helpful to decode the FLAG value for an alignment.
+
+### Genome align Q3
+We know that the first alignment in our SAM file corresponds to a fragment named SRR1039508.7. We can take a quick look at this read in our FASTQ files.
+SRR1039508.7 in the first FASTQ file was:
+
+@SRR1039508.7 HWI-ST177:290:C0TECACXX:1:1101:1952:2109/1
+TCTCAAATTTTTCAATGGTTCTTTTGTCGATGCCACCGCATTTATAGATCAGATGGCCAGTAG
++
+HJJJJJJJJJJJJJJJJJIJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJHHHHHF
+SRR1039508.7 in the second FASTQ file was:
+
+@SRR1039508.7 HWI-ST177:290:C0TECACXX:1:1101:1952:2109/2
+CGTAGATTCGGGCAAGTCCACCACTACTGGCCATCTGATCTATAAATGCGGTGGCATCGACAA
++
+HJHIJJJJJJJJJJJJJJJIJJJJJJJJIJJJJJJJJJIIJJJJJJJJJJJEHHFFFFDEDDD
+
+The '163' flag tells us that the first alignment in the SAM file corresponds to the fragment from the second FASTQ file. Note that the sequence of the read in the SAM file matches the sequence in the second FASTQ file. It also tells us that the mate is on reverse strand. Note that SRR1039508.7 in the first FASTQ file starts with "TCTCAA...", while the second alignment in the SAM file above ends with "...TTGAGA" (the reverse complement). As described in an earlier video, paired reads are sequenced (and recorded in the FASTQ files) on opposite strands. However, in the SAM file, reads are aligned and oriented on the same strand, resulting in the reverse complementation of one of the pairs.
+
+## Integrative Genomics Viewer (IGV)
+In the previous video, we aligned reads to Ensembl reference genome, hg38 / GRCh38. In this video, and in the sections of Week 2, we will examine reads in an already prepared BAM file, though this file was prepared several years ago. The reads in the BAM files provided were aligned to an earlier build of the human genome: hg19 /GRCh37. This is a good point to remember: that, if you receive an alignment file (BAM file), you should be confident that you know to which genome the reads were aligned. This is critical information for you to visualize and properly analyze the data.
+In the video, alignments may appear earlier while zooming in than on your machine. There is a setting which controls this: View > Preferences > Alignments > Visibility range threshold. So don't be surprised if the alignments in the video appear while on your machine it says "Zoom in to view the alignments".
+
+## IGV assessment
+### IGV Q1
+Which strand is this gene?
+-. The arrows in the introns of the RefSeq Genes track point to the left.
+
+### IGV Q2
+In the first exon (rightmost) there is an alternate allele (C) to the reference (T). What is the genomic location of this SNP? (The number of the basepair only, don't include the chromosome.)
+
+11119899. The SNP is visible as a blue vertical line when zoomed out, upon zooming in we can see the alternate allele, the reference allele and the location from hovering over the position.
+
+### IGV 03
+Back in the IGV Web App, notice that there are more aligned reads than can be shown in the alignment track. You should be able to scroll (up and down) to see all reads in a given region using the small scrollbar on the right. We will count how many reads are in a particular intron. (Don't worry - there aren't many!)
+
+If you are using the Desktop App and not the Web App, click [View] > [Preferences] > [Alignments]. At the top, make sure that "Downsample reads" is NOT checked (this feature will prevent IGV from showing all reads). Later if you are using IGV for your own work, you may want to check this again, as it speeds up the visualization. But for this question we want to see all the reads.
+
+How many reads are in the first intron (the rightmost intron)?
+Just count by eye the number of reads falling entirely in this intron.
+
+3. While the RNA-seq protocol is highly enriched for spliced mRNA, it is not uncommon to see a few reads in the intron or inter-genic regions. In Week 2, for analyzing expression, and differences in expression across samples, we will not count these reads.
+
+## Transcriptome alignment with RSEM I
+- GTF: specifies the locations of the exons for each gene (Gene Set)
+- RSEM expects a GTF file with only exons >> assigned to a transcript_id
+- RSEM will then prepare a reference transcriptome against which to align reads
+  - rsem-prepare-reference also create transcript fasta file (name & sequence)
+- rsem-calculate-expression
+  - Result: 2 BAM files
+    - transcript.bam: reads from the same fragment adjacent to each other
+    - transcript.sorted.bam: sorted by position
+    - genes.results: estimates per gene (1 line = transcripts from 1 gene)
+      - effective_length and the length: weighted average of the transcript lengths, weighted by the isoform percent.
+    - isoforms.results: all transcripts line by line
+      - transcript_id
+      - gene_id
+      - length
+      - effective length = transcript length-mean transcript length+1
+      - expected_count: How many reads are expected to have come from this transcript, given that there was a probabilistic model for estimating this.
+      - TPM
+      - FPKM
+      - IsoPct: isoform percentage: different transcripts of a gene, each one gets a percentage, and IsoPct from all the transcripts of a gene will add to 100%.
+      - Posterior values
+      - Confidence intervals
+## Transcriptome alignment assessment
+In the previous video we calculated gene and transcript-level expression by probabilistically aligning reads to a transcriptome with the RSEM software.
+We will investigate the values for various columns in the results files. You can also consult the RSEM documentation to learn more about the results files (https://deweylab.biostat.wisc.edu/rsem/rsem-calculate-expression.html).
+
+First, read these into an R session with the following lines:
+```{r}
+genes <- read.table("SRR1039508.genes.results", 
+                    header=TRUE, stringsAsFactors=TRUE)
+isoforms <- read.table("SRR1039508.isoforms.results",
+                       header=TRUE, stringsAsFactors=TRUE)
+```
+Both genes and isoforms have a column FPKM.
+
+Using split() and sapply(), confirm that the FPKM column in genes is the sum of the FPKM column in isoforms:
+```{r}
+fpkm.per.gene <- split(isoforms$FPKM, isoforms$gene_id)
+head(sapply(fpkm.per.gene, sum))
+head(genes$FPKM)
+```
+Or equivalently using dplyr:
+```{r}
+install.packages("dplyr")
+library(dplyr)
+isoforms %>% group_by(gene_id) %>% summarize(sum = sum(FPKM)) 
+```
+
+Make a histogram of the FPKM values in genes. Make a histogram after transforming by: log10(x+1). Before moving on, we will first remove genes with FPKM values of 0.
+
+```{r}
+hist(genes$FPKM,breaks=50)
+hist(log10(genes$FPKM+1),breaks=50)
+```
+
+```{r}
+genes2 <- genes[genes$FPKM > 0,]
+genes2$gene_id <- droplevels(genes2$gene_id)
+isoforms2 <- isoforms[isoforms$gene_id %in% genes2$gene_id,]
+isoforms2$gene_id <- droplevels(isoforms2$gene_id)
+```
+
+Run the following code to verify that the gene_id column in genes2 is equal to the levels of the gene_id column in isoforms2:
+```{r}
+stopifnot(all(genes2$gene_id == levels(isoforms2$gene_id)))
+```
+If this line runs without error, then we know the check passed. Now, using genes2, make a plot of the effective_length (x-axis) and the expected_count (y-axis), with both axes on the log scale (specify log="xy").
+```{r}
+plot(genes2$effective_length,genes2$expected_count,log="xy")
+```
+
+### Transcript align Q1
+Make a histogram of the FPKM in genes2. Make a histogram after transforming with: log10(x).
+What is the median FPKM of the genes with positive FPKM (i.e. the genes2 table)?
+```{r}
+hist(log10(genes2$FPKM))
+hist(log10(genes2$FPKM+1))
+summary(genes2$FPKM)
+median(genes2$FPKM)
+```
+
+### Transcript align Q2
+With isoforms2 , calculate the maximum IsoPct for each gene and call this max.iso . Make a histogram of max.iso .
+
+For what percent of genes is the maximum IsoPct higher than 95? (Enter your percent a number between 0 and 1; so, for example, 50% would be 0.5)
+```{r}
+split_iso = split(isoforms2$IsoPct, f=isoforms2$gene_id)
+max.iso = lapply(split_iso, max)
+vals <- unlist(max.iso)
+hist(vals)
+mean(vals>95)
+
+# OR
+
+# filter
+isoforms2_max <- isoforms2 %>%
+group_by(gene_id) %>%
+filter(IsoPct == max(IsoPct)) %>%
+select(gene_id, IsoPct)
+# re-name
+names(isoforms2_max)[which(names(isoforms2_max) == "IsoPct")] <- "max.iso"
+# remove duplicates
+isoforms2_max <- unique(isoforms2_max)
+mean(isoforms2_max$max.iso > 95)
+```
+
+### Transcript align Q3
+```{r}
+plot(max.iso,genes2$FPKM,log="y")
+boxplot(split(log10(genes2$FPKM), cut(vals, 5)), xlab="max.iso", ylab="log10 FPKM")
+```
+Calculate the number of isoforms per gene, and plot the maximum IsoPct against the number of isoforms:
+```{r}
+num.iso <- as.numeric(table(isoforms2$gene_id)) # number of transcripts per gene
+plot(num.iso, max.iso)
+```
+
+Make a barplot of the number of genes according to number of isoforms:
+```{r}
+barplot(table(num.iso))
+barplot(table(num.iso[num.iso < 15]))
+```
+The FPKM (fragments per kilobase of sequence per million mapped reads) is a normalized measure of expression (having divided out the transcript length and the number of mapped reads).
+
+TPM (transcripts per million), is a linear scaling of the FPKM, such that we would expect a gene with 1 TPM to have one molecule in a population of one million mRNAs.
+
+With genes2, plot the TPM over the FPKM.
+
+Confirm that TPM is equal to: (FPKM / sum(FPKM)) * 1e6

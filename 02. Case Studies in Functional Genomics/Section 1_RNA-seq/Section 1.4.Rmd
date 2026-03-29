@@ -1,0 +1,562 @@
+---
+title: "Section 1.4: RNA-seq.Differential expression at gene-level"
+author: "Haeun Lee"
+date: "2026-02-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Differential expression at gene-level
+## Modeling raw counts
+
+We will now perform *differential gene expression* on the counts, to try to find genes in which the differences in expected counts across samples due to the condition of interest rises above the biological and technical variance we observe. 
+
+We will use an overdispersed Poisson distribution -- called the negative binomial -- to model the *raw counts* in the count matrix. The model will include the *size factors* into account to adjust for sequencing depth. The formula will look like:
+
+$$ K_{ij} \sim \text{NB}(s_{ij} q_{ij}, \alpha_i ) $$
+
+where $K_{ij}$ is a single raw count in our count table, $s_{ij}$ is a size factor or more generally a normalization factor, $q_{ij}$ is proportional to gene expression (what we want to model with our design variables), and $\alpha_i$ is a *dispersion parameter*.
+
+Why bother modeling *raw counts*, rather than dividing out the sequencing depth and working with the normalized counts? In other words, why put the $s_{ij}$ on the right side of the equation above, rather than dividing out on the left side and modeling $K_{ij} / s_{ij}$. The reason is that, with the raw count, we have knowledge about the link between the expected value and its variance. So we prefer the first equation below to the second equation, because with the first equation, we have some additional information about the variance of the quantity on the left hand side.
+
+$$ K_{ij} \sim \text{NB}(\mu_{ij} = s_{ij} q_{ij} ) $$
+
+$$ \frac{K_{ij}}{s_{ij}} \sim \mathcal{L}(\mu_{ij} = q_{ij}) $$
+
+When we sample cDNA fragments from a pool in a sequencing library, we can model the count of cDNA fragments which originated from a given gene with a binomial distribution, with a certain probability of picking a fragment for that gene which relates to factors such as the expression of that gene (the abundance of mRNA in the original population of cells), its length and technical factors in the production of the library. When we have many genes, and the rate for each gene is low, while the total number of fragments is high, we know that the Poisson is a good model for the binomial. And for the binomial and the Poisson, there is an explicit link between on observed count and its expected variance.
+
+Below is an example of what happens when we divide or multiply a raw count. Here we show three distributions which all have the expected value of 100, although they have different variances. The first is a raw count with mean 100, the second and third are raw counts with mean 1000 and 10, which were then scaled by 1/10 and 10, respectively. 
+
+```{r}
+mypar(3,1)
+n <- 10000
+brks <- 0:300
+hist(rpois(n,100),main="",xlab="",breaks=brks,col="black")
+hist(rpois(n,1000)/10,main="",xlab="",breaks=brks,col="black")
+hist(rpois(n,10)*10,main="",xlab="",breaks=brks,col="black")
+```
+
+So, when we scale a raw count, we break the implicit link between the mean and the variance. This is not necessarily a problem, if we have 100s of samples over which to observe within-group variance, however RNA-seq samples can often have only 3 samples per group, in which case, we can get a benefit of information from using raw counts, and incorporating normalization factors on the right side of the equation above.
+
+## Negative binomial distribution
+For the negative binomial, the variance parameter is called *disperison*, and it links the mean value with the expected variance. The reason we see more dispersion than in a Poisson is mostly due to changes in the proportions of genes across biological replicates -- which we would expect due to natural differences in gene expression. 
+
+```{r}
+mypar(3,1)
+n <- 10000
+brks <- 0:400
+hist(rpois(n,lambda=100),
+     main="Poisson / NB, disp=0",xlab="",breaks=brks,col="black")
+hist(rnbinom(n,mu=100,size=1/.01),
+     main="NB, disp = 0.01",xlab="",breaks=brks,col="black")
+hist(rnbinom(n,mu=100,size=1/.1),
+     main="NB, disp = 0.1",xlab="",breaks=brks,col="black")
+```
+
+The square root of the dispersion is the coefficient of variation -- SD/mean -- after subtracting the variance we expect due to Poisson sampling.
+
+```{r}
+disp <- 0.5
+mu <- 100
+v <- mu + disp * mu^2
+sqrt(v)/mu # coefficient of variance
+sqrt(v - mu)/mu # subtract the expected variance due to a Poisson sampling process -> square root of dispersion
+sqrt(disp)
+```
+
+A number of methods for assessing differential gene expression from RNA-seq counts use the negative binomial distribution to make probabilistic statements about the differences seen in an experiment. A few such methods are *edgeR*, *DESeq2*, and *DSS*. Other methods, such as *limma+voom* find other ways to explicitly model the mean of log counts and the observed variance of log counts. A very incomplete list of statistical methods for RNA-seq differential expression is provided in the [footnotes](#foot).
+
+*DESeq2* performs a similar step to *limma* as discussed in PH525x Course 3, in using the variance of all the genes to improve the variance estimate for each individual gene. In addition, *DESeq2* shrinks the unreliable fold changes from genes with low counts, which will be seen in the resulting MA-plot.
+
+## Running DESeq2
+
+Remember, we had created the *DESeqDataSet* object earlier using the following line of code (or alternatively using *DESeqDataSetFromMatrix*)
+
+```{r}
+library(airway)
+data(airway)
+dds <- DESeqDataSet(airway, design= ~ cell + dex)
+```
+
+First, we setup the `design` of the experiment, so that differences will be considered across time and protocol variables. We can read and if necessary reset the design using the following code.
+
+```{r}
+design(dds)
+design(dds) <- ~ cell + dex # results() build a table of the differences due to the last variable in the design
+```
+
+The last variable in the design is used by default for building results tables (although arguments to `results` can be used to customize the results table), and we make sure the "control" or "untreated" level is the first level, such that log fold changes will be treated over control, and not control over treated.
+
+
+```{r}
+levels(dds$dex) # results() use the last variable in design and compare the last level (untrt) over the first level (trt).
+dds$dex <- relevel(dds$dex, "untrt") # untrt become reference level (bottom of the fold change)
+levels(dds$dex)
+```
+
+The following line runs the *DESeq2* model. After this step, we can build a results table, which by default will compare the levels in the last variable in the design, so the *dex* treatment in our case:
+
+```{r}
+dds <- DESeq(dds)
+res <- results(dds)
+res
+```
+### Examining results tables
+
+```{r}
+head(res)
+table(res$padj < 0.1) # 4819 genes have a FDR of less than 10 % = Less than 400 genes is false discoveries
+```
+
+result table
+- baseMean: mean of normalized counts across all samples
+- log2FoldChange: log2 fold change of treated over untreated
+- lfcSE: standard error estimate for the log fold change
+- stat: Wald statistic; log2 fold change / standard error
+- pvalue: from the Wald test
+- padj: Benjamini-Hochberg multiple test correction
+
+A summary of the results can be generated:
+
+```{r}
+summary(res)
+```
+
+For testing at a different threshold, we provide the `alpha` to *results*, so that the mean filtering is optimal for our new FDR threshold.
+
+```{r}
+res2 <- results(dds, alpha=0.05) # gene set of target FDR as 5 % (default is 10 %)
+table(res2$padj < 0.05)
+```
+
+## Plotting results: MA-plot
+### Visualizing results
+
+The MA-plot provides a global view of the differential genes, with the log2 fold change on the y-axis over the mean of normalized counts:
+
+```{r}
+plotMA(res, ylim=c(-4,4))
+```
+
+We can also test against a different null hypothesis. For example, to test for genes which have fold change more than doubling or less than halving:
+
+```{r}
+res.thr <- results(dds, lfcThreshold=1)
+plotMA(res.thr, ylim=c(-4,4))
+```
+
+## DE assessment I
+
+We will continue to use the dds object we prepared from the Wang et al. dataset for the normalization and transformation assessment.
+
+You can download and rebuild the dataset with the following lines of code.
+```{r}
+download.file("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/wang_eset.RData", "wang_eset.RData")
+
+load("wang_eset.RData")
+library(Biobase)
+
+count.matrix <- exprs(wang.eset)[,10:21]
+col.data <- pData(wang.eset)[10:21,]
+
+library(DESeq2)
+dds2 <- DESeqDataSetFromMatrix(count.matrix, col.data, design=~cell.type)
+```
+
+Now we make a new factor column in the colData of dds, which we set to "brain" for cerebellum and mixed brain samples, and "other" for all other samples. We will set "other" as the reference level (the denominator for the fold changes).
+```{r}
+dds2$type <- factor(ifelse(dds2$cell.type %in% c("cerebellum","mixed.brain"),
+                          "brain", "other"))
+dds2$type <- relevel(dds2$type, "other")
+```
+
+Now reset the design of the DESeqDataSet:
+```{r}
+design(dds2) <- ~ type
+```
+
+Following the code introduced in the previous videos, perform differential expression analysis using the DESeq2 package and store this again as dds. Then, create the default results table and store this as res. Try also making the default MA plot.
+
+```{r}
+dds2 <- DESeq(dds2)
+res2 <- results(dds2)
+
+plotMA(res2)
+```
+
+Now make another MA plot, but this time expand the y-axis limits by specifying ylim=c(-10,10). A log2 fold change of 10 is a fold change of 1024. Note that there are extreme log2 fold changes between brain and other tissues: this is expected as there are many genes which are expressed specifically in the brain.
+
+```{r}
+plotMA(res2,ylim=c(-10,10))
+```
+
+Find the gene with the smallest adjusted p-value in res. Use plotCounts() to make a plot of the normalized counts for this gene. If we use idx to denote the index (numeric or character) of the gene of interest, we can use the following code to create this plot.
+
+```{r}
+plotCounts(dds2, 1, intgroup="type")
+```
+
+### DE Q1
+What is the ENSEMBL ID of the gene with the smallest adjusted p-value in res?
+```{r}
+rownames(res2)[which.min(res$padj)]
+```
+
+### DE Q2
+Now create a results table res2 but this time with a lfcThreshold of 2. You do not need to re-run DESeq(). Make an MA plot of res2 with ylim=c(-10,10).
+```{r}
+res3 <- results(dds2, lfcThreshold=2)
+plotMA(res2,ylim=c(-10,10))
+```
+
+How many genes with adjusted p-value less than 0.1 have a positive LFC?
+```{r}
+summary(res3)
+```
+
+In the summary table, we can see there are a number of genes which were filtered for having either low or outlier counts:
+
+- The DESeq2 software automatically filters low count genes, and chooses a threshold by optimizing the number of genes with adjusted p-value < alpha, an argument in results(). These filtered genes will get a NA for the adjusted p-value. The reason for this low count filtering is that multiple test correction produces adjusted p-values which are larger than the original p-value. The amount that the adjusted p-value is raised depends on the number of tests. If we can remove genes which have no power to find differences (genes with very small counts, where the differences are obscured by noise), we can increase our overall power giving us smaller adjusted p-values. A review of this filtering strategy is presented in Bourgon 2010 External link.
+- DESeq2 also filters (or with more samples, replaces) genes with extreme outlier counts. These genes receive an NA for both p-value and adjusted p-value. This dataset has a large number of outlier counts, because we have combined a number of tissues in the "other" group, though these are not truly biological replicates. If a single tissue in "other" has a large count, but the others have 0, this gene was likely filtered out. An experiment with two groups of proper biological replicates would have much fewer outliers (although technical outliers can still occur).
+
+Both filters can be adjusted or turned off by the arguments listed in the summary() output.
+
+We mentioned in the first week that gene counts are proportional to gene expression, as well as sequencing depth, average transcript length, and other technical bias factors. In this analysis we accounted for sequencing depth changes across samples, and we assumed that the other factors cancelled out when calculating fold changes across samples. It is possible to account for these differences as well across samples, by using other software to estimate sample-specific bias parameters (e.g. the CQN or EDASeq package) and setting these normalizationFactors() before running DESeq().
+
+## Plot counts for one gene
+
+
+A p-value histogram:
+
+```{r}
+hist(res$pvalue[res$baseMean > 1], 
+     col="grey", border="white", xlab="", ylab="", main="")
+```
+
+A sorted results table:
+
+```{r}
+resSort <- res[order(res$padj),]
+head(resSort)
+```
+
+Examine the counts for the top gene, sorting by p-value:
+
+```{r}
+plotCounts(dds, gene=which.min(res$padj), intgroup="dex")
+```
+
+A more sophisticated plot of counts:
+
+```{r}
+library(ggplot2)
+data <- plotCounts(dds, gene=which.min(res$padj), intgroup=c("dex","cell"), returnData=TRUE) # min adj p-value
+ggplot(data, aes(x=dex, y=count, col=cell)) +
+  geom_point(position=position_jitter(width=.1,height=0)) +
+  scale_y_log10()
+```
+
+Connecting by lines shows the differences which are actually being tested by *results* given that our design includes `cell + dex`
+
+```{r}
+ggplot(data, aes(x=dex, y=count, col=cell, group=cell)) +
+  geom_point() + geom_line() + scale_y_log10() 
+```
+P value is coming from fold change in normalized counts between pairs.
+So, consistent fold changes = Nearly the same slope = small p value.
+plotCounts() is useful for looking at a gene-by-gene basis.
+
+A heatmap of the top genes:
+
+```{r}
+library(pheatmap)
+topgenes <- head(rownames(resSort),20) # genes with smallest adjpval
+rld <- rlog(dds)
+mat <- assay(rld)[topgenes,] #rlog: high count variance between genes
+mat <- mat - rowMeans(mat)
+df <- as.data.frame(colData(dds)[,c("dex","cell")])
+pheatmap(mat, annotation_col=df)
+```
+
+### Getting alternate annotations
+
+We can then check the annotation of these highly significant genes:
+
+```{r}
+library(org.Hs.eg.db)
+keytypes(org.Hs.eg.db)
+anno <- AnnotationDbi::select(org.Hs.eg.db, keys=topgenes,
+               columns=c("SYMBOL","GENENAME"), 
+               keytype="ENSEMBL")
+anno[match(topgenes, anno$ENSEMBL),]
+# for Bioconductor >= 3.1, easier to use mapIds() function
+```
+
+### Looking up different results tables
+
+The `contrast` argument allows users to specify what results table should be built. See the help and examples in `?results` for more details:
+
+```{r}
+results(dds, contrast=c("cell","N61311","N052611"))
+```
+
+
+## DE assessment II
+Continue using the res2 results table from the brain vs. other analysis performed in the previous assessment (use results from testing LFC not equal to 0).
+
+Earlier, we made a single counts plot for the gene with the smallest adjusted p-value:
+```{r}
+plotCounts(dds2, which.min(res$padj), intgroup="type") 
+```
+
+With the following code, make normalized counts plots for the top 9 genes (smallest adjusted p-values):
+```{r}
+par(mfrow=c(3,3))
+for (i in 1:9) {
+    plotCounts(dds2, order(res$padj)[i], intgroup="type")
+}
+```
+
+These genes all look similar, with large counts for brain samples and small counts for the "other" group. Here we have empirically found a set of genes which seem specific (at least in our dataset) to brain. We examine their annotation below. Run the following code to return to showing one plot at a time (rather than 9):
+```{r}
+par(mfrow=c(1,1))
+for (i in 1:9) {
+    plotCounts(dds2, order(res$padj)[i], intgroup="type")
+}
+```
+
+Build a vector of the names of the top 20 genes by the test statistic (largest first). The test statistic is the LFC divided by its standard error, and uniquely determines the p-value. So this is the same as asking for the genes with the smallest p-value and positive LFC (so higher expression in brain).
+```{r}
+top <- rownames(res2)[head(order(res2$stat, decreasing=TRUE), 20)]
+```
+
+### DE II Q1
+Use org.Hs.eg.db to determine the gene symbol of the top gene in this list.
+What is the SYMBOL of the top gene?
+```{r}
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+anno <- AnnotationDbi::select(org.Hs.eg.db, keys=top,
+               columns=c("SYMBOL","GENENAME"),
+               keytype="ENSEMBL")
+anno$SYMBOL[1]
+```
+
+### DE II Q2
+Use org.Hs.eg.db to determine the GENENAME of the top genes.
+What is the GENENAME of the top gene?
+```{r}
+anno$GENENAME[1]
+```
+
+## SVA accounts for hidden structure
+### Surrogate variable analysis for RNA-seq
+
+SVA is for finding hidden batches or other structural differences in the data set other than the condition of interest.
+
+If we suppose that we didn't know about the different cell-lines in the experiment, but noticed some structure in the counts, we could use surrogate variable analysis (SVA) to detect this hidden structure.
+
+In this demo, suppose that we do not know difference between cell types.
+```{r}
+library(sva)
+dat <- counts(dds, normalized=TRUE) # use normalized count
+idx <- rowMeans(dat) > 1
+dat <- dat[idx,] # subset
+mod <- model.matrix(~ dex, colData(dds)) # model1: include condition of interest (dex)
+mod0 <- model.matrix(~ 1, colData(dds)) # model2: exclude condition of interest (dex)
+svseq <- svaseq(dat, mod, mod0, n.sv=2) # search 2 surrogate variables
+```
+
+Do the surrogate variables capture the cell difference?
+
+```{r}
+plot(svseq$sv[,1], svseq$sv[,2], col=dds$cell, pch=16)
+```
+
+Using the surrogate variables in a *DESeq2* analysis:
+
+```{r}
+dds.sva <- dds
+dds.sva$SV1 <- svseq$sv[,1] # add surrogate variable as a new variable in column data
+dds.sva$SV2 <- svseq$sv[,2]
+design(dds.sva) <- ~ SV1 + SV2 + dex # controlling for the surrogate variables while testing on the dex treatment
+dds.sva <- DESeq(dds.sva)
+```
+
+## SVA assessment
+In this assessment, we will download a dataset which has 2 biological conditions (two inbred strains of mice) and 3 experimental batches, and see how well SVA does at detecting the batches.
+
+*Download data*
+The code below downloads the data of Bottomly et al. from the ReCount project:
+```{r}
+download.file("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/bottomly_eset.RData", "bottomly_eset.RData")
+load("bottomly_eset.RData")
+library(Biobase)
+```
+
+Now build a DESeqDataSet from this object:
+```{r}
+count.matrix_bottomly <- exprs(bottomly.eset)
+col.data_bottomly <- pData(bottomly.eset) 
+library(stringr)
+strain <- str_replace(col.data_bottomly$strain, "/", "")
+col.data_bottomly$strain <- strain
+library(DESeq2)
+dds_bottomly <- DESeqDataSetFromMatrix(count.matrix_bottomly, col.data_bottomly, design=~strain)
+```
+
+The experiment.number and lane.number columns are numeric, so make sure to turn them into factors:
+```{r}
+dds_bottomly$experiment.number <- factor(dds_bottomly$experiment.number)
+dds_bottomly$lane.number <- factor(dds_bottomly$lane.number)
+```
+
+Estimate the size factors so we can get normalized counts later:
+```{r}
+dds_bottomly <- estimateSizeFactors(dds_bottomly)
+```
+
+*EDA*
+Run the varianceStabilizingTransformation() on the dds and then make a PCA plot with c("strain","experiment.number") as the intgroup to label.
+```{r}
+vsd_bottomly <- varianceStabilizingTransformation(dds_bottomly)
+plotPCA(vsd_bottomly,intgroup=c("strain","experiment.number"))
+```
+
+The strains have names "C57BL6J" and "DBA2J".
+
+The experiments are numbered 4, 6 and 7. We can see that both strain and experimental batch have an effect on the normalized, transformed counts.
+
+Because we know the experimental batches, we could just use DESeq() with ~ experiment.number + strain to look for strain specific differences controlling for batch. But suppose we were given this data without the batch information. We could use SVA to try to identify the hidden structure.
+```{r}
+design(dds_bottomly) <- ~ experiment.number + strain
+dds_bottomly <- DESeq(dds_bottomly)
+```
+
+*Run SVA-seq*
+Run SVA-seq to find two surrogate variables using the code shown in the previous video or corresponding Rmd file.
+
+Use a design of ~ strain for the full model "mod" and ~ 1 for the reduced model "mod0".
+```{r}
+library(sva)
+dat <- counts(dds_bottomly, normalized=TRUE)
+idx <- rowMeans(dat) > 1
+dat <- dat[idx,]
+mod <- model.matrix(~ strain, colData(dds_bottomly))
+mod0 <- model.matrix(~ 1, colData(dds_bottomly))
+svseq_bottomly <- svaseq(dat, mod, mod0, n.sv=2)
+```
+
+
+*Did SVA-seq recover batch?*
+Plot the surrogate variables and color by the true batches (remember, normally we wouldn't have this information if we needed to run SVA):
+```{r}
+plot(svseq_bottomly$sv[,1], svseq_bottomly$sv[,2], col=dds_bottomly$experiment.number, pch=16)
+legend("bottom", levels(dds_bottomly$experiment.number), pch=16, col=1:3)
+
+text(svseq_bottomly$sv[,1], svseq_bottomly$sv[,2], 1:ncol(dds_bottomly), pos=1) # add numbers to each sample
+```
+
+## Fast, pseudoaligners for RNA-seq
+A number of new methods have emerged which allow for rapid quantification of transcript abundances, skipping the alignment step. Rapid can mean a few minutes to quantify abundances for each RNA-seq sample, and only a few Gb of RAM. This is a very attractive option for RNA-seq analysis, because alignment is an extra step in the process (STAR is very fast but still takes time), alignment results in large alignment files (BAM files, multiple Gb each), and then anyway, we require an extra step to count the alignments to the genes for each sample (taking ~10-30 minutes per sample for human RNA-seq).
+
+The best way to understand how these new methods work is to read the papers. The first method was Sailfish, which was published in 2014 in Nature Biotechnology. You can read the paper here:
+
+Sailfish: http://www.ncbi.nlm.nih.gov/pubmed/24752080
+
+Since then, a method called kallisto (published in Nature Biotechnology) and a method called Salmon (from the Sailfish authors and published in Nature Methods) have also been released. The papers for these are available here:
+
+kallisto: https://pubmed.ncbi.nlm.nih.gov/27043002/
+Salmon: https://pubmed.ncbi.nlm.nih.gov/28263959/
+
+The reason we bring these software up in the context of RNA-seq differential gene expression is that these tools can be used to quickly generate gene count matrices, which can then be used by the gene-level differential expression packages such as DESeq2, edgeR, or limma-voom.
+
+A paper describing this strategy is:
+
+Differential analyses for RNA-seq: transcript-level estimates improve gene-level inferences, Charlotte Soneson, Michael I. Love, Mark D. Robinson
+
+The Bioconductor software for importing the abundances from these tools, converting into gene-level counts is called "tximport" and can be found below. This package has a vignette which demonstrates both how to import files and how to hand off the count matrices to edgeR, DESeq2, or limma-voom. All the DESeq2 analysis code that was shown in the previous units would be exactly the same using the tximport pipeline, except for the read counting step, which would be skipped.
+
+https://bioconductor.org/packages/tximport 
+
+Some advantages of using these tools, then tximport to create gene-level count matrices are: (i) this approach corrects for potential changes in gene length across samples (e.g. from differential isoform usage, see [1]), (ii) these tools are substantially faster and require less memory and disk usage compared to alignment-based methods that require creation and storage of BAM files, and then counting, and (iii) it is possible to avoid discarding those fragments that can align to multiple genes with homologous sequence, thus increasing sensitivity (see [2]).
+
+[1] Trapnell, et al, "Differential analysis of gene regulation at transcript resolution with RNA-seq" 2012 http://www.nature.com/nbt/journal/v31/n1/abs/nbt.2450.html 
+
+[2] Robert and Watson, "Errors in RNA-Seq quantification affect genes of relevance to human disease", 2015 https://genomebiology.biomedcentral.com/articles/10.1186/s13059-015-0734-x 
+
+
+### RNA-seq introductory papers
+
+Mortazavi A, Williams BA, McCue K, Schaeffer L, Wold B., "Mapping and quantifying mammalian transcriptomes by RNA-seq", Nat Methods. 2008.
+<http://www.nature.com/nmeth/journal/v5/n7/full/nmeth.1226.html>
+
+John C. Marioni, Christopher E. Mason, Shrikant M. Mane, Matthew Stephens, and Yoav Gilad, "RNA-seq: An assessment of technical reproducibility and comparison with gene expression arrays" Genome Res. 2008.
+<http://www.ncbi.nlm.nih.gov/pmc/articles/PMC2527709/>
+
+Trapnell C, Williams BA, Pertea G, Mortazavi AM, Kwan G, van Baren MJ, Salzberg SL, Wold B, Pachter L.,  "Transcript assembly and quantification by RNA-seq reveals unannotated transcripts and isoform switching during cell differentiation", Nature Biotechnology, 2010.
+<http://www.nature.com/nbt/journal/v28/n5/full/nbt.1621.html>
+
+### ReCount
+
+Frazee AC, Langmead B, Leek JT. "ReCount: a multi-experiment resource of analysis-ready RNA-seq gene count datasets". BMC Bioinformatics 12:449
+<http://www.ncbi.nlm.nih.gov/pubmed/22087737>
+
+The following sections give just a few examples of the many RNA-seq differential expression software packages:
+
+### Negative binomial count methods
+
+The following methods are available on Bioconductor:
+
+- **DESeq2**
+
+Michael I Love, Simon Anders, Wolfgang Huber, "Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2" Genome Biology 2014.
+<http://genomebiology.com/2014/15/12/550>
+
+- **edgeR**
+
+Mark D. Robinson, Davis J. McCarthy, and Gordon K. Smyth, "edgeR: a Bioconductor package for differential expression analysis of digital gene expression data" Bioinformatics 2010.
+<http://www.ncbi.nlm.nih.gov/pmc/articles/PMC2796818/>
+
+- **DSS**
+
+Hao Wu, Chi Wang, Zhijin Wu, "A new shrinkage estimator for dispersion improves differential expression detection in RNA-seq data" Biostatistics 2013.
+<http://biostatistics.oxfordjournals.org/content/14/2/232>
+
+### Variance-mean modeling followed by linear model
+
+- **limma-voom** in the *limma* Bioconductor package. Limma also contains gene-set testing methods (see ROAST for example in the Reference Manual)
+
+Charity W Law, Yunshun Chen, Wei Shi and Gordon K Smyth, "voom: precision weights unlock linear model analysis tools for RNA-seq read counts", Genome Biology. 2014.
+<http://genomebiology.com/2014/15/2/R29>
+
+### Resampling-based methods
+
+- **SAMseq** in the `samr` package on CRAN
+
+Jun Li and Robert Tibshirani, "Finding consistent patterns: A nonparametric approach for identifying differential expression in RNA-seq data", Stat Methods Med Res. 2013.
+<http://smm.sagepub.com/content/22/5/519.short>
+
+### Incorporating isoform-abundance
+
+- **Cuffdiff** (the latest version is `Cuffdiff2`) with `cummeRbund` the accompanying Bioconductor visualization package.
+
+Trapnell C, Hendrickson DG, Sauvageau M, Goff L, Rinn JL, Pachter L., "Differential analysis of gene regulation at transcript resolution with RNA-seq" Nat Biotechnol. 2013.
+<http://www.ncbi.nlm.nih.gov/pubmed/23222703>
+
+- **BitSeq** (Bioconductor)
+
+Peter Glaus, Antti Honkela, and Magnus Rattray, "Identifying differentially expressed transcripts from RNA-seq data with biological variation", Bioinformatics. 2012.
+<http://bioinformatics.oxfordjournals.org/content/28/13/1721>
+
+### Book chapter
+
+https://genomicsclass.github.io/book/pages/rnaseq_gene_level.html
+
+
+
+
+

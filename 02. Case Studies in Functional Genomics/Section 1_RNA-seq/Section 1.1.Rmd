@@ -1,0 +1,307 @@
+---
+title: "Section 1.1: RNA-seq.Introduction to RNA sequencing"
+author: "Haeun Lee"
+date: "2026-02-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction to RNA sequencing
+## Introduction to RNA-seq
+## Gene model assessment
+## Data generation and counts
+## Data generation and counts
+## Model for quantification assessment
+The differences between the lengths of a gene's transcripts are typically not this extreme. But it is important to remember that changes in the abundance of each transcript will have an effect on the total count of reads from a gene, when the transcripts have different lengths, as we saw above.
+
+We will see in a video in the next subsection that the RSEM software, which quantifies transcript abundance, will estimate for each gene the weighted average transcript length, weighting by the estimate of percent expression for each transcript. This amount, along with changes in total gene expression and sequencing depth, will tell us how much the total count of reads for a gene might change across samples. If there are no changes in the percent expression of the transcripts for a gene, then the average transcript length will be equal across samples.
+
+## Transcript Quantification
+## Transcript quantification assessment
+In the previous video, we showed the model for quantification of each of three possible transcripts (also called "isoforms") of a gene. Here we will try to find the maximum likelihood estimate of $\theta$ for a given set of counts and lengths.
+
+$E \left( \begin{array}{c} Y_1 / w l_1 \\ Y_2 / w l_2 \\ Y_3 / w l_3 \\ Y_{1,2} / w l_{1,2} \\ Y_{2,3} / w l_{2,3} \end{array} \right) = \left( \begin{array}{ccc} 1 & 1 & 0 \\ 1 & 1 & 1 \\ 0 & 1 & 1 \\ 1 & 1 & 0 \\ 0 & 1 & 1 \end{array} \right) \left( \begin{array}{c} \theta _1 \\ \theta _2 \\ \theta _3 \end{array} \right)$
+
+For this assessment we will consider only a single gene for simplicity.
+
+The l's give the lengths for the regions which contribute to the exon counts for 1, 2 and 3 and to the junction counts for {1,2} and for {2,3}. We will assume these counts are disjoint: so a read counts for an exon only if it does not cross a junction. This is a simplified model, which allows independence of the counts.
+
+Suppose the following lengths:
+```{r}
+l1 = 100
+l2 = 200
+l3 = 300
+l12 = 100
+l23 = 100
+```
+
+We can write the lengths vector in R:
+```{r}
+lengths = c(100,200,300,100,100)
+```
+
+The matrix which identifies transcripts with exons and junctions:
+```{r}
+mat = cbind(c(1,1,0,1,0),c(1,1,1,1,1),c(0,1,1,0,1))
+```
+
+The length of the transcripts is then:
+```{r}
+lengths %*% mat
+```
+
+Suppose we align 1000 reads to this gene. So
+```{r}
+w = 1000
+```
+
+
+Suppose we observe the following read counts for the exons and for the two junctions:
+```{r}
+counts = c(125,350,300,125,100)
+```
+
+Assuming uniform read distribution and Poisson counts, we can get a rough estimate of theta by solving the linear system of expected counts above. The estimate is only a rough one, because we will not use the probabilistic model in the previous video. We will walk through the estimation step-by-step below.
+
+First try a guess at theta:
+```{r}
+theta.hat = c(1, 2, 3) / 10000
+```
+
+We can see with this guess, our counts are too low, and not properly apportioned to the exons and junctions:
+```{r}
+mat %*% theta.hat * lengths * w
+```
+
+We can roughly estimate theta by solving the linear system of equations above:
+```{r}
+LHS = counts/(lengths * w)
+lm.fit(mat, LHS)$coefficients
+```
+
+We note we are only roughly estimating theta, because we are not using the likelihood from our probabilitistic model for counts, but simply minizing the squared error between the left-hand side (LHS) and the right-hand side of the equation (recall the linear models covered in PH525.2x).
+
+### Transcript quant. Q1
+```{r}
+# By following the code above, solving the linear system of equations give a rough estimate of theta as:
+theta.hat = c(.00075, .0005, .0005)
+        
+#This reproduced the observed counts exactly:
+mat %*% theta.hat * lengths * w
+```
+
+### Transcript quant. Q2
+```{r}
+counts2 = c(60, 320, 420, 60, 140)
+LHS2 = counts2/(lengths * w)
+lm.fit(mat, LHS2)$coefficients
+```
+Note that if we only had one transcript for this gene, our estimate of theta would be simply:
+
+total counts / (total length * w)   # w: total reads
+
+giving us a number which is 1/10^9 times the common RPKM or FPKM measure (reads or fragments per kilobase of sequence, per million mapped reads).
+
+
+### NOTE
+
+Big picture: what are we trying to do?
+
+You have one gene that can produce 3 transcripts (isoforms):
+	•	Transcript 1
+	•	Transcript 2
+	•	Transcript 3
+
+RNA-seq gives you reads, but:
+	•	Reads don’t tell you directly which transcript they came from
+	•	Many transcripts share exons
+
+So the question is:
+
+Given the reads we see on exons and junctions, how much of each transcript was present?
+
+That “how much” is called θ (theta).
+
+⸻
+
+Step 1: What is θ?
+
+$\theta = (\theta_1, \theta_2, \theta_3)$
+	•	\theta_1: abundance of transcript 1
+	•	\theta_2: abundance of transcript 2
+	•	\theta_3: abundance of transcript 3
+
+These are relative abundances, not raw read counts.
+
+⸻
+
+Step 2: What do we actually observe?
+
+We don’t observe transcripts directly.
+
+We observe read counts on:
+	1.	Exon 1
+	2.	Exon 2
+	3.	Exon 3
+	4.	Junction (1–2)
+	5.	Junction (2–3)
+
+counts = c(125, 350, 300, 125, 100)
+
+Think of these as 5 buckets where reads landed.
+
+⸻
+
+Step 3: Why lengths matter
+
+Longer regions → more chances for reads to land.
+
+lengths = c(100, 200, 300, 100, 100)
+
+So:
+	•	Exon 3 is long → more reads expected
+	•	Junctions are short → fewer reads expected
+
+⸻
+
+Step 4: Which transcript contributes to which region?
+
+That’s what this matrix encodes:
+
+mat = cbind(
+  c(1,1,0,1,0),
+  c(1,1,1,1,1),
+  c(0,1,1,0,1)
+)
+
+Let’s rewrite it as a table:
+
+Region	Tx1	Tx2	Tx3
+Exon 1	1	1	0
+Exon 2	1	1	1
+Exon 3	0	1	1
+Junction 1–2	1	1	0
+Junction 2–3	0	1	1
+
+This just says:
+	•	Transcript 2 includes everything
+	•	Transcript 1 skips exon 3
+	•	Transcript 3 skips exon 1
+
+⸻
+
+Step 5: The model in words (very important)
+
+The model says:
+
+Expected read count =
+
+(total reads) × (region length) × (sum of θ’s of transcripts that include that region)
+
+Mathematically:
+$E(Y) = w \times l \times (\text{which transcripts include this region})$
+
+This is what the big matrix equation is expressing.
+
+⸻
+
+Step 6: Normalize the observed counts
+
+To compare observed counts to θ, we divide out what we know:
+
+LHS = counts / (lengths * w)
+
+This gives:
+
+Observed rate per base per read
+
+Now the model becomes:
+
+$\text{Observed rate} \approx \text{matrix} \times \theta$
+
+Which is a linear equation.
+
+⸻
+
+Step 7: Why we can’t solve it exactly
+	•	The data are noisy
+	•	Counts are Poisson
+	•	The system is overdetermined (5 equations, 3 unknowns)
+
+So instead of solving exactly, we ask:
+
+“Which θ makes the predicted values as close as possible to what we observe?”
+
+That’s least squares regression.
+
+⸻
+
+Step 8: Estimating θ in R
+
+lm.fit(mat, LHS)$coefficients
+
+This finds:
+	•	θ₁
+	•	θ₂
+	•	θ₃
+
+that best explain the observed exon + junction counts on average.
+
+This is not the full maximum likelihood estimate — it’s a rough approximation.
+
+⸻
+
+Step 9: Why the first guess was bad
+
+theta.hat = c(1, 2, 3) / 10000
+mat * theta.hat * lengths * w
+
+This step just says:
+
+“If θ looked like this, what counts would we expect?”
+
+The predicted counts are:
+	•	Too small
+	•	Not matching the observed pattern
+
+So the guess is wrong.
+
+⸻
+
+Step 10: What this teaches conceptually
+
+This example shows:
+	•	Reads come from regions, not transcripts
+	•	Transcripts overlap → ambiguity
+	•	θ must be inferred indirectly
+	•	Linear algebra links transcripts → regions
+	•	Least squares gives a quick but crude estimate
+
+⸻
+
+One-sentence intuition
+
+We estimate transcript abundance by finding the combination of transcripts whose shared exons and junctions best explain the read counts we actually see.
+
+⸻
+
+Why this matters in real RNA-seq
+
+Real tools like:
+	•	RSEM
+	•	Salmon
+	•	kallisto
+
+Do the same conceptual thing, but:
+	•	Use full likelihood models
+	•	Model fragment bias
+	•	Enforce θ ≥ 0 and sum-to-one constraints
+	•	Scale to thousands of transcripts
+
+This example is the toy version that shows the core idea.
+
+## Unstable Quantification
+

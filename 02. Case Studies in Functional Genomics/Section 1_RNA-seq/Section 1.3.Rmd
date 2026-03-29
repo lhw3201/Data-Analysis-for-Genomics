@@ -1,0 +1,584 @@
+---
+title: "Section 1.3: RNA-seq.Normalization and EDA of gene counts"
+author: "Haeun Lee"
+date: "2026-02-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Normalization and EDA of gene counts
+## BAM files and GTF files
+
+In this lab we will examine 8 samples from the airway package, which are from the paper by Himes et al: “RNA-seq Transcriptome Profiling Identifies CRISPLD2 as a Glucocorticoid Responsive Gene that Modulates Cytokine Function in Airway Smooth Muscle Cells”.
+
+This lab will focus on a summarized version of an RNA-seq experiment: a count matrix, which has genes along the rows and samples along the columns. The values in the matrix are the number of reads which could be uniquely aligned to the exons of a given gene for a given sample. We will demonstrate how to build a count matrix for a subset of reads from an experiment, and then use a pre-made count matrix. A new pipeline for building count matrices, which skips the alignment step, is to use fast pseudoaligners such as Sailfish, Salmon and kallisto, followed by the tximport package. See the package vignette for more details. Here, we will continue with the read counting pipeline.
+
+If there is no pre-made count matrix, in a real RNA-seq workflow, you would:
+	1.	Download FASTQ files (many GB)
+	2.	Align reads to the genome → BAM files
+	3.	Count reads overlapping genes → count matrix
+
+### Part A — Get the files in the right order
+
+First, make variables for the different BAM files and GTF file. Use the `sample.table` to construct the BAM file vector, so that the count matrix will be in the same order as the `sample.table`.
+```{r messages=FALSE}
+# 1) Load the dataset and sample table
+BiocManager::install("airway")
+library(airway) # includes small example BAMs and a sample metadata table
+dir <- system.file("extdata", package="airway", mustWork=TRUE)
+csv.file <- file.path(dir, "sample_table.csv")
+sample.table <- read.csv(csv.file, row.names=1)
+
+# 2) Build the BAM file paths (ordered like sample.table)
+bam.files <- file.path(dir, paste0(sample.table$Run, "_subset.bam")) # bam.files is a character vector of 8 BAM paths, in the same order as sample.table
+gtf.file <- file.path(dir, "Homo_sapiens.GRCh37.75_subset.gtf")
+```
+8 RNA-seq samples (from the airway package). For each sample you have:
+	•	a BAM file (aligned reads)
+	•	a GTF file (gene annotation: where exons are)
+
+## Building a count matrix
+
+### Part B — Make “features” (exons grouped by gene)
+
+Next we create an *Rsamtools* variable which wraps our BAM files, and create a transcript database from the GTF file. We can ignore the warning about `matchCircularity`. Finally, we make a *GRangesList* which contains the exons for each gene.
+```{r messages=FALSE}
+# 3) Wrap BAM paths into a BamFileList
+library(Rsamtools) # required package to read BAM files
+bam.list <- BamFileList(bam.files)
+
+# 4) Build a transcript database (TxDb) from the GTF
+library(GenomicFeatures) # required package to build transcript database
+txdb <- makeTxDbFromGFF(gtf.file, format="gtf") # Creates a structured database (TxDb) of genes/transcripts/exons
+
+# 5) Extract exons grouped by gene
+exons.by.gene <- exonsBy(txdb, by="gene") # extract Bioconductor object from transcript database
+exons.by.gene[[1]] # exons for the first gene
+length(exons.by.gene) # number of genes in our subset
+lengths(exons.by.gene) # number of exons per gene
+summary(lengths(exons.by.gene)) # Min = 1, Max = 79: some gene have 1 exon, others have 79 exons
+summary(elementNROWS(exons.by.gene))
+```
+
+This creates a GRangesList (exons.by.gene):
+	•	List of elements
+	•	One element = one gene
+	•	Inside each element: all exon ranges for that gene
+
+So conceptually:
+exons.by.gene[["GENE1"]] = exon1 range, exon2 range, exon3 range...
+exons.by.gene[["GENE2"]] = ...
+This object defines the “bins” you’ll count reads into.
+
+### Part C — Count reads per gene using summarizeOverlaps
+
+The following code chunk creates a *SummarizedExperiment* containing the counts for the reads in each BAM file (columns) for each gene in `exons.by.gene` (the rows). We add the `sample.table` as column data. Remember, we know the order is correct, because the `bam.list` was constructed from a column of `sample.table`.
+
+Count table/matrix
+- rows = genes
+- col = samples
+- values = # of fragments overlapping that gene's exon
+- standard input for DESeq2, edgeR, limma-voom, etc
+```{r cache=TRUE}
+# 6) Count reads overlapping the exon ranges
+library(GenomicAlignments)
+se <- summarizeOverlaps(exons.by.gene, bam.list,
+                        mode="Union", # see Vignettes, only count reads mapped to single gene (feature)
+                        singleEnd=FALSE, # count paired end reads, 2 paired reads align to exon = 1 fragment = 1 count
+                        ignore.strand=TRUE, # our data = unstranded RNA-seq
+                        fragments=TRUE) # include when we only have one read from a pair of reads aligning to a gene for counting
+
+# 7) Attach sample metadata to the count object
+colData(se) <- DataFrame(sample.table) # add sample info to column
+  # Valid operation! We used the sample table to count the reads, so we know colnames(se) line up with sample.table$Run
+assay(se) # count matrix
+dim(assay(se))
+colSums(assay(se)) # total number of reads aligned to this subset of genes
+```
+This is the heart of the pipeline. What each argument means:
+	•	exons.by.gene: the gene exon regions to count over (features)
+	•	bam.list: your aligned reads (8 BAMs)
+
+Counting rules:
+	•	mode="Union": a fragment counts for a gene if it overlaps any exon in that gene without overlapping with other genes (union of exons).
+	•	singleEnd=FALSE: data are paired-end.
+	•	fragments=TRUE: also count fragments without pair (important for paired-end).
+	•	ignore.strand=TRUE: don’t require reads to match gene strand (typical unless you have strand-specific protocol).
+
+Result: se is a SummarizedExperiment object containing the count matrix.
+
+SummarizedExperiment has:
+	•	assays: counts
+	•	colData: sample metadata (dex treatment, cell line, etc.)
+	•	rowRanges: the exons/gene ranges
+
+### Part D — Alternative counting method: featureCounts (Rsubread)
+
+A similar function in the *Rsubread* library can be used to construct a count matrix:
+
+```{r cache=TRUE}
+# 8) Count with featureCounts
+BiocManager::install("Rsubread")
+library(Rsubread)
+# similar as summarizeOverlaps
+fc <- featureCounts(bam.files, annot.ext=gtf.file,
+                    isGTFAnnotationFile=TRUE, 
+                    isPaired=TRUE)
+
+# 9) Inspect the featureCounts output
+names(fc)
+unname(fc$counts) # hide the colnames
+```
+This does the same basic job as summarizeOverlaps, but through Subread’s highly optimized counter.
+
+Key arguments:
+	•	annot.ext=gtf.file: where the gene annotations are
+	•	isGTFAnnotationFile=TRUE: tells it annotation is GTF
+	•	isPaired=TRUE: paired-end fragments
+
+Output fc is a list; fc$counts is the gene-by-sample count matrix.
+
+### Part E — Compare the two counting methods
+
+Now you want to check that summarizeOverlaps and featureCounts give similar counts.
+
+10) The problem: row orders might differ
+
+Even if both produce “counts per gene”, the gene row order may not be the same.
+
+So you must match rows by gene ID.
+
+Plot the first column from each function against each other (after matching the rows of the *featureCounts* matrix to the one returned by *summarizeOverlaps*.
+
+```{r}
+# 11) Scatterplot: counts from method A vs method B (sample 1)
+plot(assay(se)[,1], 
+     fc$counts[match(rownames(se),rownames(fc$counts)),1])
+abline(0,1)
+# fc$counts = assay(se)
+```
+assay(se)[,1]
+	•	assay(se) extracts the count matrix from the SummarizedExperiment.
+	•	[,1] takes the first sample column.
+
+So: counts for sample 1 from summarizeOverlaps.
+
+match(rownames(se), rownames(fc$counts))
+	•	rownames(se) = gene IDs in se
+	•	rownames(fc$counts) = gene IDs in featureCounts
+	•	match() returns the index positions of se genes inside fc$counts
+
+So fc$counts[match(rownames(se),rownames(fc$counts)),1]:
+“Reorder featureCounts rows to match the same gene order as se, then take sample 1.”
+
+*Why you might see small differences*
+
+Even with the same BAM + GTF, methods can differ because of details like:
+	•	how they treat reads overlapping multiple genes
+	•	how they handle exon unions vs exon parts
+	•	filtering of low-quality or non-proper pairs
+	•	counting “fragments” vs “reads” (you handled this correctly with fragments=TRUE)
+
+*Quick summary*
+	1.	Get BAMs (aligned reads) in correct order
+	2.	Get gene exons from GTF (defines what “gene” means)
+	3.	Count fragments overlapping exon unions per gene → count matrix
+	4.	Check counting method consistency by plotting after matching gene rows
+
+## Count matrix assessment
+In the previous video, we saw how to build a count matrix for the Himes et al. dataset (in the airway package) using BAM files and a GTF file with the gene annotation.
+
+In this assessment, we will count RNA-seq fragments from a single sample in the Brooks et al. External link dataset (in the pasillaBamSubset package), and on a single chromosome of the Drosophila genome.
+
+Instead of using a GTF file, we will show how to extract exons for each gene from a TxDb package for Drosophila: TxDb.Dmelanogaster.UCSC.dm3.ensGene.
+
+Load a single BAM file for a paired-end sequencing experiment:
+```{r}
+library(pasillaBamSubset)
+bam.file <- untreated3_chr4()
+library(Rsamtools)
+bf <- BamFile(bam.file)
+```
+
+Next, obtain the exons-by-gene object ebg using the following Drosophila TxDb object.
+```{r}
+library(TxDb.Dmelanogaster.UCSC.dm3.ensGene)
+txdb <- TxDb.Dmelanogaster.UCSC.dm3.ensGene
+ebg <- exonsBy(txdb, by="gene")
+```
+Commands for creating the exons-by-gene object for the TxDb object can be found in the previous video and corresponding Rmd notebook.
+
+### Count matrix Q1
+```{r}
+ebg[1]
+seqnames(ebg[1])
+```
+We can subset to only the genes on chromosome 4 using the following R command:
+```{r}
+chr4.idx <- all(seqnames(ebg) == "chr4")
+ebg.sub <- ebg[chr4.idx]
+```
+In the first line, we are first comparing seqnames of our exons-by-gene GRangesList against "chr4". The result of this comparison is a list of lists, corresponding to whether each exon in each gene is annotated to "chr4". The call to all() collapses across exons for each gene and only returns TRUE if all exons are annotated to "chr4".
+
+### Count matrix Q2
+
+Count the fragments in the genes in ebg.sub using summarizeOverlaps() from the GenomicAlignments package and with settings:
+```{r}
+library(GenomicAlignments)
+se <- summarizeOverlaps(ebg.sub, bam.file,
+                        singleEnd=FALSE,
+                        ignore.strand=TRUE)
+assay(se)
+```
+## Normalizing for sequencing depth
+### Visualizing sample-sample distances
+
+We now load the full *SummarizedExperiment* object, counting reads over all the genes.
+
+```{r, message=FALSE}
+library(airway)
+data(airway)
+airway # 64102 genes, 8 samples
+```
+
+```{r}
+colData(airway) # sample info
+```
+
+```{r}
+rowRanges(airway) # gene and exons 
+```
+
+The counts matrix is stored in `assay` of a *SummarizedExperiment*.
+
+```{r}
+head(assay(airway))
+```
+Huge difference in sequencing depth between samples
+```{r}
+colSums(assay(airway)) # number of reads aligned to genes for each sample
+sort(colSums(assay(airway)))/1e6 # ranges from 15 to 30 -> technical artifact, need to be controlled
+```
+Also, the variance is much higher for large counts than for small counts.
+So if we were comparing the raw counts vector, genes with very high count would be more important, and add more information to the distance than the small count genes.
+
+This code chunk is not necessary, but helps to make nicer plots below with large axis labels (`mypar(1,2)` can be substituted with `par(mfrow=c(1,2))` below).
+
+```{r}
+# library(devtools)
+# install_github("ririzarr/rafalib")
+library(rafalib)
+mypar()
+```
+
+Note that, on the un-transformed scale, the high count genes have high variance. That is, in the following scatter plot, the points start out in a tight cone and then fan out toward the top right. This is a general property of counts generated from sampling processes, that the variance typically increases with the expected value. We will explore different scaling and transformations options below.
+
+```{r}
+plot(assay(airway)[,1:2], cex=.1)
+```
+Tightly packed together at the low end.
+
+### Creating a DESeqDataSet object
+
+We will use the `DESeq2` package to normalize the sample for sequencing depth. The *DESeqDataSet* object is just an extension of the *SummarizedExperiment* object, with a few changes. The matrix in `assay` is now accessed with `counts` and the elements of this matrix are required to be non-negative integers (0,1,2,...).
+
+We need to specify an experimental *design* here, for later use in differential analysis. The design starts with the tilde symbol `~`, which means, model the counts (log2 scale) using the following formula. Following the tilde, the variables are columns of the `colData`, and the `+` indicates that for differential expression analysis we want to compare levels of `dex` while controlling for the `cell` differences.
+
+```{r}
+library(DESeq2)
+dds <- DESeqDataSet(airway, design= ~ cell + dex) # DeSeqDataSet from SummarizedExperiment
+```
+
+We can also make a *DESeqDataSet* from a count matrix and column data.
+
+```{r}
+dds.fc <- DESeqDataSetFromMatrix(assay(se),    # or fc$counts from Rsubread 
+                                 colData=sample.table, 
+                                 design=~ cell + dex) # DeSeqDataSet from count matrix
+```
+
+### Normalization for sequencing depth
+
+The following estimates size factors to account for differences in sequencing depth, and is only necessary to make the `log.norm.counts` object below.
+
+```{r}
+dds <- estimateSizeFactors(dds) # give robust estimate of the difference in sequencing depth
+sizeFactors(dds) # < 1: lower sequencing depth
+colSums(counts(dds))
+plot(sizeFactors(dds), colSums(counts(dds)))
+abline(lm(colSums(counts(dds)) ~ sizeFactors(dds) + 0))
+```
+sizeFactors is more robust than colSums because 1 huge count (ex. 10 million count for 1 gene) can have a huge effect.
+
+Size factors are calculated by the median ratio of samples to a pseudo-sample (the geometric mean of all samples). In other words, for each sample, we take the exponent of the median of the log ratios in this histogram.
+
+```{r}
+loggeomeans <- rowMeans(log(counts(dds)))
+hist(log(counts(dds)[,1]) - loggeomeans, 
+     col="grey", main="", xlab="", breaks=40)
+```
+
+The size factor for the first sample:
+
+```{r}
+exp(median((log(counts(dds)[,1]) - loggeomeans)[is.finite(loggeomeans)]))
+sizeFactors(dds)[1]
+```
+
+Make a matrix of log normalized counts (plus a pseudocount):
+
+```{r}
+log.norm.counts <- log2(counts(dds, normalized=TRUE) + 1) # normalized by sequencing depth = counts / size factors
+```
+
+Another way to make this matrix, and keep the sample and gene information is to use the function `normTransform`. The same matrix as above is stored in `assay(log.norm)`.
+
+```{r}
+log.norm <- normTransform(dds)
+```
+
+Examine the log counts and the log normalized counts (plus a pseudocount).
+
+```{r}
+rs <- rowSums(counts(dds))
+mypar(1,2)
+boxplot(log2(counts(dds)[rs > 0,] + 1)) # not normalized
+boxplot(log.norm.counts[rs > 0,]) # normalized
+```
+
+Make a scatterplot of log normalized counts against each other. Note the fanning out of the points in the lower left corner, for points less than $2^5 = 32$.
+
+```{r}
+plot(log.norm.counts[,1:2], cex=.1)
+```
+Variance between two samples is more constant along the range.
+Although at the bottom, where the counts become very close to zero, shows higher spread
+
+## Transformations and variance
+### Stabilizing count variance
+
+Now we will use a more sophisticated transformation, which is similar to the variance stablizing normalization method taught in Week 3 of Course 4: Introduction to Bioconductor. It uses the variance model for count data to shrink together the log-transformed counts for genes with very low counts. For genes with medium and high counts, the `rlog` is very close to `log2`. For further details, see the section in the DESeq2 [paper](#foot). 
+
+```{r}
+rld <- rlog(dds)
+plot(assay(rld)[,1:2], cex=.1)
+```
+The result of using rlog transformation is to shrink together the values for the genes that have very low counts.
+For the genes that have medium to high counts, the rlog will be very close to the log2 transform.
+
+
+Another transformation for stabilizing variance in the *DESeq2* package is `varianceStabilizingTransformation`. These two tranformations are similar, the *rlog* might perform a bit better when the size factors vary widely, and the *varianceStabilizingTransformation* is much faster when there are many samples.
+
+```{r}
+vsd <- varianceStabilizingTransformation(dds)
+plot(assay(vsd)[,1:2], cex=.1)
+```
+
+We can examine the standard deviation of rows over the mean for the *log plus pseudocount* and the *rlog*. Note that the genes with high variance for the *log* come from the genes with lowest mean. If these genes were included in a distance calculation, the high variance at the low count range might overwhelm the signal at the higher count range.
+
+```{r}
+library(vsn)
+# meanSdPlot: calculate the mean over all samples and the SD over all samples
+meanSdPlot(log.norm.counts, ranks=FALSE) 
+```
+
+For the rlog:
+
+```{r}
+meanSdPlot(assay(rld), ranks=FALSE)
+```
+
+For the VST:
+
+```{r}
+meanSdPlot(assay(vsd), ranks=FALSE)
+```
+
+The principal components (PCA) plot is a useful diagnostic for examining relationships between samples:
+
+```{r}
+plotPCA(log.norm, intgroup="dex")
+```
+
+Using the rlog:
+
+```{r}
+plotPCA(rld, intgroup="dex")
+```
+
+Using the VST:
+
+```{r}
+plotPCA(vsd, intgroup="dex")
+```
+
+We can make this plot even nicer using custom code from the *ggplot2* library:
+
+```{r}
+library(ggplot2)
+(data <- plotPCA(rld, intgroup=c("dex","cell"), returnData=TRUE))
+(percentVar <- 100*round(attr(data, "percentVar"),2)) # Percent Variance of PC1 & PC2
+```
+
+```{r}
+makeLab <- function(x,pc) paste0("PC",pc,": ",x,"% variance")
+ggplot(data, aes(PC1,PC2,col=dex,shape=cell)) + geom_point() +
+  xlab(makeLab(percentVar[1],1)) + ylab(makeLab(percentVar[2],2))
+```
+
+In addition, we can plot a hierarchical clustering based on Euclidean distance matrix:
+
+```{r fig.width=10, fig.height=5}
+mypar(1,2)
+plot(hclust(dist(t(log.norm.counts))), labels=colData(dds)$dex)
+plot(hclust(dist(t(assay(rld)))), labels=colData(rld)$dex)
+```
+
+## Normalization and transformation assessment
+For the normalization and transformation assessment, we will examine RNA-seq count matrices prepared by the ReCount project External link. Below is code which will download an ExpressionSet object from the website for the Wang et al. External link dataset. This is an analysis of 22 RNA-seq samples of different human tissues. The ReCount project website has more details on the alignment and counting steps.
+```{r}
+download.file("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/wang_eset.RData", "wang_eset.RData")
+```
+Then load this RData file within R:
+```{r}
+load("wang_eset.RData")
+library(Biobase)
+```
+
+We will take a subset of the count matrix and the column data for building a DESeqDataSet:
+```{r}
+count.matrix <- exprs(wang.eset)[,10:21]
+col.data <- pData(wang.eset)[10:21,]
+library(DESeq2)
+dds <- DESeqDataSetFromMatrix(count.matrix, col.data, design=~cell.type)
+```
+Note, the DESeqDataSetFromMatrix() function is smart and it looks to see if there are funny things with our data. You'll notice it gives a message here that there were levels of cell.type which had no associated samples, and therefore these levels were "dropped".
+
+Our goal in the rest of the assessment will be to estimate a correction for sequencing depth and perform simple EDA of the samples by cell type. The tissue information is in:
+```{r}
+dds$cell.type
+```
+
+### Q1: Size factors
+What tissue has the highest size factor?
+```{r}
+dds <- estimateSizeFactors(dds)
+dds$cell.type[which.max(sizeFactors(dds))]
+```
+
+### Q2: Variance stabilizing transformation
+Run the varianceStabilizingTransformation() transformation (blind=FALSE) on the counts and save this to an object vsd. Make a PCA plot with this object using "cell.type" as the color of the points.
+
+What sample clusters with cerebellum?
+```{r}
+vsd <- varianceStabilizingTransformation(dds, blind = FALSE)
+plotPCA(vsd, intgroup="cell.type")
+```
+For the last question, we will make a scatterplot matrix of some of the samples' transformed counts.
+```{r}
+rmeans <- rowMeans(assay(vsd)) # row mean of rlog-transformed data
+idx <- c(1,2,10,7,8,9,12) # pick some samples for visualization
+mat <- assay(vsd)[rmeans > 1,idx] # pull out a small matrix of rlog-transformed counts
+colnames(mat) <- vsd$cell.type[idx] # name the columns of matrix by cell type
+```
+
+Now we could already call pairs() on this matrix, and it would make a matrix of scatterplots. But we will add an extra bit of code that will make a fast, subsetted scatter plot on top and add Pearson correlations below (the correlation code is directly copied from ?pairs):
+```{r}
+panel.sub <- function(x,y,...) points(cbind(x,y)[sample(length(x),1000),],...)
+panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...)  {
+	usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    r <- abs(cor(x, y))
+    txt <- format(c(r, 0.123456789), digits = digits)[1]
+    txt <- paste0(prefix, txt)
+    if(missing(cex.cor)) cex.cor <- 0.8/strwidth(txt)
+    text(0.5, 0.5, txt, cex = cex.cor * r)
+}
+```
+
+Now make our scatterplot matrix:
+```{r}
+pairs(mat, asp=1, col=rgb(0,0,0,.3), lower.panel=panel.cor, upper.panel=panel.sub)
+```
+
+## RNA-seq and ratios of counts
+1) Why people start with a Poisson model for RNA-seq counts
+Why Poisson feels reasonable
+
+A Poisson model is a good approximation when:
+	•	you have a large number of trials (many fragments sampled)
+	•	each trial has a small probability of being from a particular gene
+	•	you count “how many times did gene g appear?”
+
+2) What Poisson immediately predicts about log ratios
+Biologists often compare two conditions using log fold change:
+$\log\left(\frac{Y_{g,2}}{Y_{g,1}}\right)$
+
+Low-count genes will have much more variable log ratios.
+
+Why?
+If counts are small, random sampling noise is huge relative to the mean.
+
+3) Real data shows the same pattern
+The basic mean–variance relationship (low counts = noisy) is real, not just theory.
+
+4) The crucial distinction: technical vs biological replicates
+*Technical replicates*
+
+Same biological sample, sequenced twice:
+	•	variability mainly comes from sampling and technology
+	•	Poisson can be a decent approximation
+
+*Biological replicates*
+
+Different individuals/cell cultures:
+	•	now you have true biological variation
+	•	gene expression really differs from sample to sample
+	•	Poisson alone usually fails
+
+5) How to test Poisson with data: variance vs mean
+A defining property of Poisson is:
+$\text{Var}(Y) = \mathbb{E}[Y]$
+
+So if Poisson were correct, then for each gene:
+	•	compute the sample mean across replicates
+	•	compute the sample variance across replicates
+	•	plot variance vs mean
+
+They should lie around the identity line (variance ≈ mean).
+
+*What is observed in biological replicates?*
+
+The points sit above the line: variance > mean
+This is called overdispersion.
+
+So biological replicates show more variability than Poisson allows.
+
+6) Why Negative Binomial appears (Poisson + extra variability)
+Common explanation:
+	•	Within a given sample, counts might be Poisson conditional on a true rate \lambda.
+	•	But across biological replicates, that rate \lambda is not constant; it varies due to biology.
+	•	If you model \lambda as Gamma-distributed across samples, then the resulting marginal distribution of counts is Negative Binomial.
+
+In words:
+Poisson explains sampling noise
+Gamma explains biological variability in expression
+Together → Negative Binomial for observed counts across biological replicates
+
+That’s why packages like edgeR and DESeq2 use the Negative Binomial.
+
+7) What you should remember (practical takeaways)
+
+A) Low counts are noisy
+Large fold changes for lowly expressed genes can be misleading.
+
+B) Poisson is too “tight” for biological replicates
+Poisson forces variance = mean, but biology adds extra variability.
+
+C) Negative Binomial fits RNA-seq better
+It allows:
+$\text{Var}(Y) = \mu + \alpha \mu^2$
+(variance increases faster than mean), which matches real replicate data.
