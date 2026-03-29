@@ -1,0 +1,314 @@
+---
+title: "Section 3.1: Introduction to ChIP-seq"
+author: "Haeun Lee"
+date: "2026-02-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction to ChIP-seq
+## Introduction to transcription regulation
+## Introduction to transcription regulation Assessment
+
+Transcription factors bind to chromatin in sequence-specific manner to regulate gene expression. Genes co-expressed in different conditions are not always under the control of the same transcription factor, although are more likely. However, transcription factor binding in bacteria or yeast typically only regulate the nearest gene expression, whereas in mammalian genomes could regulate the expressions of genes far away.
+
+## ChIP-seq technique
+
+ChIP-Seq (Chromatin Immunoprecipitation followed by sequencing) is a method used to identify where transcription factors and other DNA-binding proteins bind across the entire genome in living cells. It helps researchers understand gene regulation mechanisms efficiently and genome-wide.
+
+How ChIP-Seq Works:
+	1.	Crosslinking
+Cells are treated with formaldehyde to stabilize protein–DNA interactions, preserving natural binding events.
+	2.	Chromatin Fragmentation
+The chromatin (DNA packaged with proteins) is broken into small fragments (typically 200–400 base pairs) using sonication. Fragmentation occurs randomly across many cells.
+	3.	Immunoprecipitation
+An antibody specific to the protein of interest (e.g., a transcription factor) is used to pull down that protein along with the DNA fragments it is bound to. Although some non-specific binding may occur, true binding sites become enriched across millions of cells.
+	4.	DNA Recovery and Sequencing
+The enriched DNA fragments are purified, amplified, and sequenced (usually 25–50 base pairs from one end of each fragment). The short reads are then mapped back to the reference genome.
+	5.	Peak Identification
+Regions with many overlapping mapped reads indicate enriched binding sites (“peaks”), representing locations where the transcription factor binds. Thousands of such binding sites can be identified genome-wide.
+	6.	Control Sample
+A control experiment (without antibody enrichment) is performed to measure background signal. True binding sites show strong enrichment in the ChIP sample compared to the control.
+
+Key Concept:
+
+ChIP-Seq detects protein–DNA binding sites by identifying genomic regions where sequencing reads are significantly enriched compared to background, revealing regulatory interactions across the genome.
+
+## ChIP-seq technique assessment
+
+ChIP stands for Chromatin Immuno Precipitation, and ChIP-seq can detect genome-wide in vivo binding site of transcription factors. It is often conducted in millions of cells, where protein-DNA interactions are fixed, then chromatin is sheared into small pieces. Then a factor-specific antibody is used to pull down the factor as well as the DNA attached to it. It absolutely requires a factor-specific antibody. The process has noise since sometimes antibody is not specific enough and there are random DNA stick to the pull down, but overall the factor-bound DNA will be enriched.
+
+## ChIP-seq peak calling
+
+Summary of the Script (ChIP-Seq Data Analysis and Peak Calling with MACS)
+
+After a ChIP-Seq experiment, sequencing data are generated in FASTQ format, and the reads must be mapped to a reference genome to identify enriched regions (peaks).
+
+⸻
+
+1. Quality Control
+	•	Sequencing quality is assessed using tools such as FastQC.
+	•	A quality score above 30 generally indicates good sequencing performance.
+	•	Poor quality typically reflects sequencing issues, not sample problems.
+	•	A good ChIP-Seq dataset usually has >50% of reads mapping to the correct genome.
+
+⸻
+
+2. Read Mapping
+
+Reads are aligned to a reference genome using tools such as:
+	•	Bowtie
+	•	BWA (slightly more accurate but sometimes slower)
+	•	STAR (especially fast for paired-end, long-read, deeply sequenced datasets)
+
+Important considerations:
+	•	Use the correct species genome (e.g., human vs mouse).
+	•	Use the correct genome assembly (e.g., hg18, hg19, hg38).
+	•	Incorrect genome choice can cause mapping errors or indicate sample contamination/mix-up.
+
+Paired-end sequencing improves mapping accuracy but increases cost.
+
+⸻
+
+3. Identifying Binding Sites (Peak Calling)
+
+After mapping:
+	•	True transcription factor binding sites show clusters of reads (peaks).
+	•	Because fragments are sequenced from one end, reads map to opposite strands around the actual binding site.
+	•	To pinpoint the binding location, reads must be shifted toward the center of the fragment.
+
+⸻
+
+4. MACS Algorithm (Model-Based Analysis for ChIP-Seq)
+
+The algorithm MACS improves peak detection by:
+
+a. Estimating Fragment Length
+	•	Uses ~1,000 strong peaks to model the distance between plus-strand and minus-strand read clusters.
+	•	This distance estimates fragment size.
+	•	Reads are shifted by half the fragment length toward the center to accurately locate binding sites.
+
+b. Statistical Modeling of Enrichment
+Originally, one might assume reads follow a Poisson distribution across the genome. However:
+	•	Real sequencing data show overdispersion (variation greater than Poisson expectation).
+	•	Chromatin sonication introduces uneven coverage.
+	•	Both treatment and control samples may show regional bias.
+
+Therefore:
+	•	Peaks must be defined as regions enriched in ChIP compared to control, not just regions with many reads.
+
+⸻
+
+5. Dynamic Local Background (Improvement over Simple Poisson)
+
+Instead of using a single genome-wide background rate (lambda), MACS:
+	•	Estimates a local lambda from control data.
+	•	For each candidate region (~300 bp), it calculates expected background using:
+	•	The 300 bp window
+	•	Nearby 1 kb, 5 kb, and 10 kb regions
+	•	Uses the maximum of these estimates for a conservative background model.
+
+This dynamic and conservative approach ensures that only regions with significantly higher ChIP signal than local background are called true binding peaks.
+
+⸻
+
+Key Takeaway
+
+ChIP-Seq analysis involves:
+	1.	Quality control of sequencing reads
+	2.	Accurate genome mapping
+	3.	Strand shifting to locate binding centers
+	4.	Statistical comparison of treatment vs control
+	5.	Local background modeling using MACS
+
+A region is called a transcription factor binding site only if it shows significant enrichment over a locally estimated background from control samples.
+
+## Peak Calling Assessment
+### Peak Calling Assessment Q1
+
+How are ChIP-seq reads distributed around a transcription factor binding site?
+
+plus-strand reads to the left and minus strand reads to the right of the precise binding site.
+Transcription factor binding sites are enriched in the ChIP protocol, and in sequencing the plus-strand reads will be mapped to the left of the precise binding location, while minus-strand reads will be mapped to the right of binding.
+
+### Peak Calling Assessment Q2
+
+If in most ChIP-seq read clusters, the plus and minus strand reads are often 120bp apart, how many basepair (bp) should we shift the reads in the 3' direction to better locate the precise binding site?
+
+60.
+ChIP fragments are often 100-300bp long, and sequencing only sequences the ends of the fragments. If plus-strand reads (to the left of binding) and minus-strand reads (to the right of the binding) are separated by 120bp, the precise binding site should be right in the middle of the two. So shifting reads by 60bp in 3' direction will find the precise binding location.
+
+### Peak Calling Assessment Q3
+
+MACS?
+- uses a sliding window across the genome to find regions of ChIP enrichment
+- calculates statistical enrichment of reads in ChIP over control samples using a Poisson distribution
+- uses a dynamic background with a robust estimate of lambda parameter based on genome-wide background and the control over 1kb, 5kb, and 10kb to adjust any local chromatin or sequencing bias
+
+MACS uses a sliding window across the genome to find regions where the ChIP samples have enriched reads than the controls. MACS uses a Poisson distribution, but with a dynamic lambda parameter. The lambda estimated from the control just over the ChIP peaks is often inaccurate becuase the control might not have enough reads in these short peaks (200-300bp). Therefore, MACS look at lambda estimate over the whole genome, over the sliding window (~200-300bp), the 1kb, 5kb, 10kb centered at the window, and estimate a lambda parameter from each from the controls, and pick the biggest (most robust) number to compared to the control reads to estimate ChIP enrichment.
+
+## ChIP-seq quality control 1
+
+Here is a concise summary of the script:
+
+⸻
+
+Overview: ChIP-Seq Quality Control and Peak Calling
+
+Unlike DNA or RNA sequencing, ChIP-Seq is technically complex and prone to failure. Therefore, quality control (QC) is critical before interpreting results.
+
+⸻
+
+1. Initial Sequencing Quality Control
+
+FastQC
+	•	Used to assess sequencing quality.
+	•	A quality score below 30 suggests poor sequencing and may require resequencing.
+
+Read Mapping Metrics
+
+After mapping reads to the genome, several metrics are evaluated:
+	•	Uniquely mapped reads:
+Percentage of reads that map to exactly one genomic location.
+→ Higher is better.
+	•	Uniquely mapped locations:
+Number of distinct genomic positions covered by uniquely mapped reads.
+→ Prevents overcounting PCR duplicates.
+→ Higher is better.
+	•	Library complexity (y/x ratio):
+Unique mapped locations ÷ total mapped reads.
+→ Measures diversity of the library.
+	•	PBC (PCR Bottlenecking Coefficient) (from the ENCODE Project):
+Locations with exactly one read ÷ total unique locations.
+→ High PBC indicates low PCR duplication and good library complexity.
+
+Low complexity usually means insufficient DNA after ChIP, leading to excessive PCR amplification and redundant reads.
+
+In MACS, duplicate reads at the same location are typically collapsed to one read to reduce noise.
+
+⸻
+
+2. Peak Calling with MACS
+
+Peak calling is commonly performed using MACS.
+
+Key Features:
+	•	Models fragment size automatically or uses a fixed shift (e.g., 73 bp).
+	•	Detects:
+	•	Narrow peaks (e.g., transcription factors)
+	•	Broad peaks (e.g., histone modifications)
+
+Outputs:
+	•	Peak coordinate file (chromosome, start, end, enrichment)
+	•	Genome-wide signal track (wiggle file)
+	•	P-values and False Discovery Rates (FDR)
+
+⸻
+
+3. Statistical Significance & False Discovery Rate (FDR)
+
+P-value Calculation
+	•	Based on a Poisson distribution
+	•	Compares treatment vs. control using dynamic background (lambda)
+
+Multiple Testing Issue
+
+Since millions of genomic windows are tested, FDR correction is required.
+
+FDR Estimation (Original MACS Method)
+	•	Call peaks in:
+	•	Treatment over control
+	•	Control over treatment (false positives)
+	•	FDR = False peaks ÷ Total peaks
+
+Example:
+	•	1000 treatment peaks
+	•	10 control peaks
+→ FDR ≈ 1%
+
+Modern approaches may use:
+	•	Benjamini-Hochberg correction
+	•	q-value methods
+
+⸻
+
+4. Effect of Sequencing Depth
+	•	Deeper sequencing increases statistical power.
+	•	P-values improve with more reads.
+	•	However, biological binding sites do not increase with depth.
+	•	Therefore, fold change (treatment vs. control) should also be considered, not just p-value.
+
+Good ChIP-Seq data shows:
+	•	Low FDR
+	•	Strong fold enrichment
+	•	High peak confidence
+
+⸻
+
+5. Additional Quality Metrics
+
+FRiP Score (Fraction of Reads in Peaks)
+	•	Percentage of total reads that fall within called peaks.
+	•	Higher FRiP = better signal-to-noise ratio.
+	•	Depends on:
+	•	Factor type (histone marks > transcription factors)
+	•	Antibody quality
+	•	Sequencing depth
+
+⸻
+
+6. DNase Hypersensitivity Overlap
+
+DNase I hypersensitivity experiments identify open chromatin regions:
+	•	Enzyme: DNase I
+	•	Cuts accessible chromatin regions
+	•	Sequenced short fragments indicate regulatory activity
+
+Large datasets (e.g., from ENCODE) provide known DNase regions.
+
+QC Principle:
+	•	High-quality ChIP-Seq peaks should overlap DNase hypersensitive sites.
+	•	If only a small percentage overlap, data quality may be poor.
+
+⸻
+
+Overall Indicators of Good ChIP-Seq Data
+
+A high-quality experiment typically shows:
+	•	High sequencing quality (FastQC > 30)
+	•	High unique mapping rate
+	•	High library complexity & PBC
+	•	Strong fold enrichment
+	•	Low FDR
+	•	High FRiP score
+	•	Strong overlap with DNase hypersensitive regions
+
+⸻
+
+In short, ChIP-Seq requires rigorous multi-layer quality control—from sequencing quality to statistical validation and biological consistency—to ensure reliable peak detection.
+
+## Quality control assessment
+
+ChIP-seq quality control (QC)?
+- Redundant ChIP-seq reads (same read sequenced many times) indicate small amount of ChIP DNA and PCR amplification bias.
+- ChIP-seq peak calling with MACS should be conducted by removing reads that can't be uniquely mapped to the genome and removing any redundant reads.
+- high percentage of ChIP-seq peak overlap with DNase hypersensitivity regions is an indicator of good data quality.
+
+FASTQC is an indicator of sequencing quality. If a ChIP-seq data has good FASTQC but low mappability, then the ChIP-seq protocol / technique needs to be improved. Re-sequencing the same sample will not help improve the percentage of DNA that can be uniquely aligned to the genome, as sequencing is not the problem in the protocol. High ChIP-seq read redundancy is an indication of low starting DNA and PCR over amplification. MACS has better performance if using uniquely mapped reads and keeping only one of the redundant reads. ChIP-seq peak overlap with DNase hypersensitivity regions is an indicator of good data quality.
+
+
+
+
+
+
+
+
+
+
+
+
+
+

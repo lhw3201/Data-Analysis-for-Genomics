@@ -1,0 +1,786 @@
+---
+title: "Section 3.2: Advanced ChIP-seq Analysis"
+author: "Haeun Lee"
+date: "2026-02-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Advanced ChIP-seq Analysis
+## ChIP-seq Quality Control 2
+
+Downstream Quality Control Analyses for ChIP-Seq
+
+Beyond basic sequencing QC and peak calling, several biological validation analyses help assess ChIP-Seq data quality.
+
+⸻
+
+1. Evolutionary Conservation Analysis
+
+PhastCons Conservation Score
+	•	Each base in the human genome has a conservation score calculated by comparing sequences across species (human, mouse, fish, elephant, etc.).
+	•	Highly conserved bases are more likely to be functionally important.
+	•	Scores (e.g., PhastCons) are available from the UCSC Genome Browser.
+
+How It’s Used in ChIP-Seq QC
+	1.	Align all detected peaks by their center.
+	2.	Calculate the average conservation score at each position.
+	3.	Plot conservation across aligned peaks.
+
+Expected Pattern
+	•	A peak of conservation at the center of binding sites.
+	•	Lower conservation in flanking regions.
+
+Interpretation:
+	•	Higher conservation at peak centers suggests functional transcription factor binding.
+	•	However, many true binding sites are not conserved, so lack of conservation does not mean nonfunctional.
+	•	Conserved sites tend to be more evolutionarily constrained and potentially more critical.
+
+⸻
+
+2. Metagene Profile Analysis
+
+This examines how ChIP-Seq signal distributes across genes.
+
+An example tool mentioned is the Cis-Element Annotation System, which:
+	•	Takes the ChIP-Seq signal (wiggle file).
+	•	Aligns all genes by transcription start site (TSS) and transcription end site (TES).
+	•	Normalizes gene lengths (stretching or shrinking to standard size).
+	•	Plots average signal across genes.
+
+Expected Patterns
+	•	Many transcription factors show enrichment near transcription start sites (promoters).
+	•	Some histone marks show different patterns:
+	•	Example: H3K36me3 is enriched toward the gene body, especially the later half.
+	•	Highly expressed genes often show stronger ChIP enrichment than silent genes.
+
+Interpretation:
+	•	Observing the expected biological pattern for your factor supports data quality.
+	•	Deviations from known biology may suggest poor ChIP performance.
+
+⸻
+
+3. Genomic Distribution of Peaks
+
+Examine where peaks fall:
+	•	Promoters
+	•	Exons
+	•	Introns
+	•	Intergenic regions
+
+Expected distributions depend on the transcription factor.
+
+If previous studies show ~80% promoter binding for a factor, similar results should be observed in new datasets. Large discrepancies may indicate technical issues.
+
+⸻
+
+4. Replicate Consistency
+
+Biological replicates are essential.
+
+Good Replicates Should Show:
+	•	Strong genome-wide signal correlation (>50–60%).
+	•	~60% or greater peak overlap between replicates.
+	•	Similar enrichment patterns at high-signal regions.
+
+Poor agreement suggests low reproducibility or technical noise.
+
+⸻
+
+5. Motif Enrichment Analysis
+
+ChIP-Seq provides ideal data for discovering transcription factor binding motifs.
+
+Expected QC Signals:
+	1.	Correct motif enrichment
+	•	Example:
+	•	Myc → E-box motif
+	•	Estrogen receptor → nuclear receptor motif
+	•	Finding the expected motif validates the experiment.
+	2.	Motif strength correlates with peak strength
+	•	Stronger peaks → more motif occurrences.
+	•	Weaker peaks → fewer motifs.
+	3.	Motif enrichment at peak centers
+	•	Motifs should be concentrated near the peak summit.
+	•	Enrichment toward the center supports true binding.
+
+Failure to detect expected motif enrichment suggests possible antibody issues or non-specific binding.
+
+⸻
+
+Overall Indicators of High-Quality ChIP-Seq Data
+
+Strong ChIP-Seq data should show:
+	•	Conservation enrichment at peak centers
+	•	Expected metagene distribution
+	•	Proper genomic annotation distribution
+	•	High replicate reproducibility
+	•	Enrichment of the correct motif
+	•	Motif concentration at peak summits
+
+⸻
+
+Key Idea
+
+Good ChIP-Seq quality control combines:
+	•	Statistical validation
+	•	Reproducibility
+	•	Evolutionary evidence
+	•	Functional genomic context
+	•	Motif biology
+
+When all these independent lines of evidence agree, the dataset is likely reliable and biologically meaningful.
+
+## CHIP-SEQ QC 2 Assessment
+### Quality control II Q1
+
+Which of the following is true about evolutionary conservation of ChIP-seq peaks?
+- for a working ChIP-seq of a transcription factor, the overall peaks should have better evolutionary conservation than genome background
+
+If the ChIP-seq experiment of a transcription factor (TF) worked, then it should capture all the binding sites of the TF in that cell condition. Because TF binding sites are under more evolutionary constraint, they will have overall better conservation than genome background. However, non-conserved sites might still be functional, and very often only a small portion of the total binding peaks have good evolutionary conservation.
+
+### Quality control II Q2
+
+Which of the following is true about ChIP-seq QC?
+- for a working ChIP-seq of a transcription factor (TF), the TF's DNA binding motif should be enriched in center of the ChIP-seq peaks.
+- for a working TF ChIP-seq, the TF's DNA binding motif should be more enriched in the stronger peaks than the weaker peaks.
+- TF ChIP-seq often show signal enrichment at transcription start sites of genes.
+
+ChIP-seq data rarely has as good a inter-biological-replicate correlation as RNA-seq, since the protocol is pretty complex. Normally signal correlation > 0.6 and peak overlap over 60% are considered good replicate agreement. For transcription factor (TF) ChIP-seq, the correct TF motif should be enriched more in the stronger peaks, and more enriched in the peak center (summit). Even though only small % of all the TF binding sites are at the gene promoters, there is still an enrichment of overall ChIP-seq peak and signal enrichment near the transcription start sites of genes.
+
+## ChIP-seq Target Genes
+
+ChIP-Seq and Gene Regulatory Network Inference
+
+1. ChIP-Seq Reveals Gene Regulatory Networks
+
+ChIP-Seq identifies where transcription factors (TFs) bind in the genome.
+If we know where a TF binds, we can infer which genes it may regulate.
+
+In Yeast (Simple Case)
+	•	Most TF binding occurs in proximal promoters (within ~1 kb upstream of genes).
+	•	Binding in a promoter usually means regulation of that nearby gene.
+	•	This allows relatively straightforward reconstruction of regulatory networks.
+
+Common Regulatory Patterns Identified in Yeast
+
+Using genome-wide ChIP-Seq of many TFs, researchers identified:
+	•	Auto-regulation: A TF regulates its own gene.
+	•	Multi-component loop: TF A regulates B, and B regulates A.
+	•	Feedforward loop:
+A regulates B, and both A and B regulate C.
+	•	Single-input motif:
+One TF regulates multiple genes (often co-expressed).
+	•	Multi-input motif (combinatorial regulation):
+Multiple TFs jointly regulate a set of genes.
+	•	Regulatory chain:
+A → B → C → D (cascade regulation).
+
+In yeast, combining ChIP-Seq and gene expression data allows reasonably accurate regulatory network inference.
+
+⸻
+
+2. The Human Challenge: Distal Binding
+
+Unlike yeast, human TF binding is rarely confined to promoters:
+
+Typical distribution:
+	•	~3% in proximal promoters
+	•	~40–45% in introns
+	•	~40–45% in intergenic regions
+
+Most binding occurs far from genes.
+
+This raises a key question:
+
+When a TF binds far away, which gene does it regulate?
+
+⸻
+
+3. Assigning Binding Sites to Target Genes
+
+Simple (but imperfect) approaches:
+	•	Assign to the nearest gene
+	•	Use a fixed window (e.g., within 10 kb)
+	•	Require multiple nearby binding sites
+
+These are crude approximations.
+
+⸻
+
+4. Chromatin Looping and Hi-C Insights
+
+Genome architecture studies using Hi-C show:
+	•	Chromatin forms 3D loops.
+	•	Interaction frequency decays exponentially with genomic distance.
+	•	Nearby regions interact more often than distant ones.
+
+Thus:
+	•	A binding site 1–2 kb away is highly likely to regulate.
+	•	A site 10 kb away is less likely.
+	•	A site 50 kb away is even less likely.
+
+⸻
+
+5. Regulatory Potential Model
+
+To better link TF binding to genes, a regulatory potential (RP) score was developed:
+
+For each gene:
+	•	Consider binding sites within 100 kb of its transcription start site (TSS).
+	•	Weight each site by an exponential decay function based on distance.
+	•	Closer binding sites contribute more.
+	•	More distant sites contribute less.
+
+This produces a continuous regulatory potential score per gene.
+
+⸻
+
+6. Integrating Binding and Expression: The BETA Algorithm
+
+The computational tool BETA integrates:
+	•	ChIP-Seq binding data
+	•	Differential gene expression data
+
+It determines:
+	1.	Which genes are likely direct targets
+	2.	Whether the TF acts as:
+	•	Activator
+	•	Repressor
+	•	Both
+
+Example Findings
+	•	Androgen receptor (AR) in prostate cancer:
+	•	Genes near AR binding sites are mostly upregulated.
+	•	AR acts primarily as an activator.
+	•	Estrogen receptor (ER) in breast cancer:
+	•	Genes near ER binding sites can be upregulated or downregulated.
+	•	ER functions as both activator and repressor.
+
+BETA tests whether genes with high regulatory potential are enriched for up- or down-regulation compared to random genes.
+
+⸻
+
+7. What This Enables
+
+Using ChIP-Seq + gene expression + regulatory potential:
+
+Researchers can:
+	•	Identify direct TF targets
+	•	Determine whether the TF activates or represses
+	•	Discover regulatory pathways
+	•	Analyze motif partners and combinatorial regulation
+	•	Infer functional roles of TFs in specific cell types
+
+⸻
+
+Key Takeaways
+	•	In yeast, promoter binding makes regulatory inference straightforward.
+	•	In humans, most TF binding is distal and requires 3D chromatin considerations.
+	•	Chromatin interactions follow exponential decay with distance.
+	•	Regulatory potential integrates distance-weighted binding.
+	•	BETA combines binding and expression data to:
+	•	Identify direct targets
+	•	Classify TFs as activators, repressors, or both.
+
+Overall, ChIP-Seq combined with expression data provides powerful insight into gene regulatory mechanisms, especially when analyzed with distance-aware models like regulatory potential.
+
+### Hi-C
+
+Hi-C is a genome-wide experimental technique for studying the three-dimensional architecture of chromatin in the nucleus. It measures the frequency of physical contacts between genomic regions, revealing how chromosomes fold and interact to regulate gene expression and genome stability.
+
+*Key facts*
+
+	•	Developed: 2009 by Erez Lieberman-Aiden and colleagues
+	•	Method type: Chromatin conformation capture (3C-based)
+	•	Resolution: From megabase to kilobase scale
+	•	Applications: 3D genome mapping, gene regulation, structural variant detection
+
+*Methodology*
+
+Hi-C builds upon the chromatin conformation capture (3C) principle. Cells are crosslinked to preserve DNA–protein interactions, and chromatin is digested with restriction enzymes. The resulting fragments are ligated so that regions spatially close in the nucleus become joined. Sequencing the ligation junctions reveals which genomic loci are in proximity, allowing construction of a contact matrix representing 3D genome organization.
+
+### BETA
+
+Binding Expression Target Analysis (BETA) is a computational software tool designed for integrating transcription factor binding data with gene expression data. It helps identify potential target genes regulated by specific transcription factors and predict whether those factors act as activators or repressors. BETA is widely used in genomics and bioinformatics research to interpret regulatory mechanisms from high-throughput sequencing data.
+
+*Key facts*
+	•	Full name: Binding Expression Target Analysis
+	•	Primary use: Infers transcription factor regulatory function
+	•	Inputs: ChIP-seq and differential gene expression data
+	•	Developer: Developed by the laboratory of X. Shirley Liu at Dana-Farber Cancer Institute
+	•	Programming language: Python
+
+*Background*
+
+BETA was introduced to bridge the gap between binding-site data (e.g., ChIP-seq peaks) and transcriptional outcomes (e.g., RNA-seq differential expression). By statistically integrating these datasets, it allows researchers to identify the direct targets of transcription factors and characterize their regulatory effects on gene expression.
+
+*Mechanism and workflow*
+
+The software calculates a regulatory potential score for each gene based on the proximity and intensity of ChIP-seq peaks. It then correlates this score with gene expression changes to predict whether the factor is an activator or repressor. BETA outputs ranked lists of putative targets and visualizations of regulatory trends.
+
+*Notability and applications*
+
+BETA has become a standard in regulatory genomics for dissecting transcriptional control mechanisms in development, cancer, and other biological processes. Its ease of integration with existing sequencing data pipelines and compatibility with Python environments have contributed to its broad adoption.
+
+## ChIP-seq Target Genes Assessment
+
+### Target gene Q1
+
+Which of the following is true for finding the target gene of transcription factor binding sites.
+
+- in mammalian system, a binding site after (3') the gene's transcription termination might still regulate the expression of the gene
+- a gene can be regulated by multiple nearby binding sites
+- one binding site can regulate multiple nearby genes
+- the potential of a binding site to loop to a gene's promoter follows exponential decay propotional to the distance.
+
+TF binding and target gene is a many-by-many relationship: one binding site can regulate the expression of multiple genes (stochastic so might be different in different cells) and one gene is regulated by mulitple nearby enhancers. In mammalian system, binding sites can appear in promoters, introns, distal locations either before or after the gene, and sometimes even a few genes away, and can still regulate a gene's expression level. This is often determined by how much a TF binding is looping (3D chromatin structure) is looping to the promoter of the gene, which often follows an exponential decay based on the distance between the binding site and the gene promoter.
+
+### Target gene Q2
+
+Imagine a simple scenario where a transcription factor (TF) can have on / off states. In an experiment the TF is turned on and we measured the TF binding during the on state, as well as the RNA expression of both the on and off states. Which of the following is true about the TF?
+
+the TF is a transcriptional activator if genes with better regulatory potential of the TF binding (i.e. more binding sites and binding closer to the TSS of the genes) are more activated in expression than random genome background
+
+Whenever the cell is perturbed (e.g. turn on a TF), there are always genes showing either up or down expression, so one gene going up or down doesn't necessarily mean the TF is overall an activator or repressor, even if the TF has a binding site near the gene. A TF is an activator if overall genes with more and closer TF binding sites show significant more up-regulation of expression when the TF is on, and a TF can be both an activator or a repressor by interacting with different other TFs.
+
+## ChIP-seq Example
+
+Example Study: Estrogen Receptor (ER) Regulation in Breast Cancer
+
+1. Background
+	•	About two-thirds of breast cancers are driven by overactive estrogen receptor (ER).
+	•	Key questions:
+	•	Where does ER bind in the genome?
+	•	What genes does it regulate?
+	•	How does it control gene expression?
+
+⸻
+
+2. Early Findings (ChIP-chip Era)
+
+Before genome-wide sequencing:
+	•	Only ~100 ER binding sites were identified (on chromosomes 21 and 22).
+	•	Motif analysis confirmed enrichment of the ER binding motif, validating the data.
+	•	After masking ER motifs, another enriched motif appeared:
+	•	A Forkhead family motif.
+
+Important Insight
+
+Because formaldehyde crosslinking captures:
+	•	Protein–DNA interactions
+	•	Protein–protein interactions
+
+If ER interacts with another transcription factor (TF), ChIP may also capture that partner’s binding sites.
+
+This suggested ER collaborates with a Forkhead TF.
+
+⸻
+
+3. Identification of FOXA1 as a Partner
+
+Among Forkhead family members:
+	•	FOXA1 was:
+	•	Highly expressed in breast cancer
+	•	Strongly correlated with ER expression
+
+Experimental validation showed:
+	•	FOXA1 binds ER target regions.
+	•	Knocking down FOXA1 prevents ER binding.
+
+Conclusion:
+
+FOXA1 is a pioneering factor:
+	•	It binds first.
+	•	Opens chromatin.
+	•	Enables ER to bind.
+
+⸻
+
+4. Genome-wide ER Binding
+
+With improved sequencing:
+	•	Thousands of ER binding sites were identified.
+	•	Only ~3–4% were in proximal promoters.
+	•	Most were distal (intronic or intergenic).
+	•	Only ~20% showed strong evolutionary conservation (not surprising given breast-specific biology).
+
+Peak centers showed slightly elevated conservation overall.
+
+⸻
+
+5. Additional ER Collaborators
+
+Beyond ER and FOXA1 motifs, three additional motifs were enriched:
+	•	AP-1
+	•	C/EBP
+	•	Oct
+
+Interesting Observation:
+
+At some ER binding sites:
+	•	AP-1 motif was present
+	•	ER motif was absent
+	•	FOXA1 motif was absent
+
+This suggests:
+	•	ER does not always bind DNA directly.
+	•	ER can bind indirectly via interaction with AP-1.
+
+⸻
+
+6. Time-Course Expression Analysis
+
+Breast cancer cells were treated with estrogen.
+Gene expression was measured at:
+	•	3 hours
+	•	6 hours
+	•	12 hours
+
+Key discovery:
+	•	ER directly activates the gene NRIP early.
+	•	NRIP encodes another transcription factor.
+	•	Later, NRIP collaborates with ER and AP-1.
+	•	This complex represses certain target genes.
+
+Experimental Validation:
+	•	Knocking down NRIP prevents later repression.
+	•	Confirms NRIP’s role in ER-mediated repression.
+
+⸻
+
+7. Broader Principles Learned
+
+1. Transcription Factors Rarely Act Alone
+	•	TFs often collaborate with other TFs.
+	•	These collaborators can:
+	•	Assist binding
+	•	Change regulatory outcomes (activation vs repression)
+
+2. Pioneering Factors
+	•	Bind first to relatively open chromatin.
+	•	Often recognize short, AT-rich motifs.
+	•	Open chromatin for other TFs.
+	•	Example: FOXA1 for ER in breast cancer.
+
+3. Tissue-Specific Binding
+
+Although ER recognizes the same DNA motif:
+	•	In breast, ovary, liver, bone, pituitary, etc.
+	•	Different pioneering factors are present.
+	•	Different chromatin regions are accessible.
+	•	ER binds different genomic locations.
+	•	Different genes are regulated.
+
+Thus:
+
+The same transcription factor can regulate different genes in different tissues because of distinct pioneering factors and chromatin environments.
+
+⸻
+
+Key Takeaways
+	•	ER drives many breast cancers.
+	•	FOXA1 is a pioneering factor required for ER binding.
+	•	ER can activate and repress genes via different partners (e.g., NRIP, AP-1).
+	•	Most ER binding is distal, not promoter-proximal.
+	•	TF binding is highly context-dependent.
+	•	Tissue-specific pioneering factors determine where TFs bind.
+
+Overall, this study demonstrates how ChIP-Seq, motif analysis, and gene expression integration reveal complex, collaborative transcriptional regulation mechanisms in cancer biology.
+
+## ChIP-seq Example Assessment
+
+### Example Q1
+
+Which of the following is true for estrogen receptor (ER) binding sites?
+
+- estrogen receptor ChIP-seq will pull down many FoxA1 binding sites
+- estrogen receptor can both activate and repress gene expression
+
+ER interacts with FoxA1, so ER ChIP-seq will also enrich FoxA1 binding sites. ER can activate and repress gene expression by interacting with different collaborating TFs. The majority of the ER sites are not conserved, as only 20% show reasonable conservation (phastcons > 0.2).
+
+## CISTROME
+
+Integrating ChIP-Seq, Motifs, and Gene Expression: The Cistrome Platform
+
+1. Need for Data Integration
+
+To understand how a transcription factor (TF) regulates gene expression, researchers must integrate:
+	•	ChIP-Seq binding data
+	•	Motif analysis
+	•	Differential gene expression data
+
+Over the years, several computational tools were developed, including:
+	•	MACS – for peak calling
+	•	BETA – for integrating binding with gene expression
+
+However, many experimental biologists are not computational experts, motivating the creation of user-friendly web tools.
+
+⸻
+
+2. The Cistrome Web Platform
+
+The web application Cistrome was developed to allow researchers to analyze ChIP-Seq data via a graphical interface.
+	•	Built on the Galaxy framework.
+	•	Users can upload data, choose analysis functions, set parameters, and run analyses on the server.
+	•	Results and files are stored and reusable for downstream analyses.
+
+“Cistrome” refers to the complete set of cis-regulatory regions bound by a transcription factor genome-wide.
+
+⸻
+
+3. Cistrome Analysis Pipeline Features
+
+Available at: cistrome.org/ap
+
+The pipeline allows users to:
+	•	Perform ChIP-chip and ChIP-Seq peak calling
+	•	Compare replicates (correlation, overlap)
+	•	Visualize signal across gene structures (TSS, exons, introns)
+	•	Identify nearby genes
+	•	Perform motif analysis
+	•	Conduct conservation analysis
+	•	Lift over genome versions (e.g., hg18 → hg19)
+	•	Generate heatmaps and clustering
+	•	Integrate ChIP-Seq with gene expression data
+	•	Predict direct targets using regulatory potential
+
+The pipeline is open-source.
+
+⸻
+
+4. Cistrome Data Browser (Cistrome DB)
+
+The Cistrome Data Browser collects and processes publicly available ChIP-Seq datasets from Gene Expression Omnibus.
+
+Users Can:
+	•	Search by species, tissue, or transcription factor
+	•	Browse datasets (e.g., estrogen receptor ChIP-Seq)
+	•	View metadata and original publications
+	•	Download processed peak files
+	•	Visualize results in a genome browser
+
+⸻
+
+5. Built-in Quality Control (QC)
+
+Each dataset includes QC metrics, indicated by green circles:
+
+QC includes:
+	•	Total read count
+	•	Mappability
+	•	Non-redundant reads
+	•	Number of peaks
+	•	FRiP (fraction of reads in peaks)
+	•	Peak genomic distribution (promoters, introns, etc.)
+	•	Overlap with DNase hypersensitive regions
+	•	Conservation profile (average PhastCons at peak centers)
+	•	Motif enrichment in top peaks
+
+More green indicators = higher-quality dataset.
+
+⸻
+
+6. Regulatory Potential and Target Prediction
+
+The platform calculates regulatory potential:
+	•	Genes with many nearby binding sites (distance-weighted) receive higher scores.
+	•	These genes are predicted as likely targets.
+
+Example:
+	•	In an ER dataset, the gene ZMYND8 showed many nearby ER binding sites, suggesting strong regulation.
+
+Users can visualize binding patterns directly in a genome browser.
+
+⸻
+
+7. “Find Similar Datasets” Feature
+
+Similar to recommendation systems (like Netflix):
+	•	The platform computes similarity between datasets.
+	•	Suggests related ChIP-Seq experiments based on binding pattern similarity.
+	•	Helps researchers discover relevant public datasets.
+
+⸻
+
+Key Takeaways
+	•	Understanding TF function requires integrating binding, motifs, and expression.
+	•	User-friendly platforms like Cistrome make advanced analyses accessible.
+	•	Cistrome provides:
+	•	Peak calling
+	•	QC metrics
+	•	Motif analysis
+	•	Conservation analysis
+	•	Regulatory potential scoring
+	•	Public dataset access
+	•	Dataset similarity search
+
+Overall, Cistrome accelerates ChIP-Seq analysis for experimental biologists by combining computational power with an intuitive web interface.
+
+## Cistrome Assessment
+
+### Cistrome Q1
+
+Which of the following is true about Cistrome DB?
+- collects and processes public ChIP-seq and DNase-seq data in human and mouse
+- can visualize the processed data in genome browsers
+- can find similar datasets to a particular dataset in the DB
+- shows quality metrics of the data
+
+### Cistrome Q2
+
+Which of the following are used to quality control (QC) a processed ChIP-seq in Cistrome DB?
+- mappability of the reads
+- low read redundancy
+- % of reads in peaks
+- overlap with DNase-seq peaks
+- number of peaks with good fold enrichment
+- sequence quality
+
+In Cistrome DB quality control, there are six circles, and the above QC metrics represent each of the six, except the one about overlap with genes. In addition, Cistrome provides the evolutionary conservation plot at the bottom, which is another good QC metric.
+
+## Cistrome Analysis Pipeline Hands-On
+
+The walkthrough demonstrates how to:
+	1.	Upload ChIP-seq data
+	•	Import BAM or BED files.
+	•	Select the correct reference genome (e.g., mouse mm9).
+	2.	Run peak calling with MACS2
+	•	Provide ChIP and control (input) files.
+	•	Set parameters such as effective genome size and q-value (default 5% FDR).
+	•	Execute the job and monitor progress.
+	3.	Examine output files
+	•	View the HTML report summarizing the MACS2 run.
+	•	Inspect the peak file (.xls format), which contains:
+	•	Peak coordinates
+	•	Summit locations
+	•	Read pileup
+	•	p-values
+	•	Fold enrichment
+	•	q-values
+	•	In the example, more than 30,000 peaks were identified.
+
+Finally, the tutorial notes that the resulting peak files can be used for downstream analyses, such as integration with gene expression data and other regulatory analyses.
+
+## BETA Software Suite
+
+Purpose of BETA
+
+BETA integrates ChIP-seq peak data with differential expression data to:
+	1.	Predict transcription factor (TF) function
+	•	Determines whether the TF acts as an activator, repressor, or both.
+	2.	Identify direct target genes
+	•	Infers which genes are likely directly regulated by the TF.
+	3.	Perform motif analysis (BETA Plus only)
+	•	Identifies DNA motifs enriched in peaks associated with activated or repressed genes.
+
+⸻
+
+Versions of BETA
+	•	BETA Basic
+	•	Requires ChIP-seq peaks + differential expression data.
+	•	Predicts TF function and direct targets.
+	•	BETA Plus
+	•	Requires peaks + expression data + genome FASTA.
+	•	Adds motif enrichment analysis.
+	•	BETA Minus
+	•	Requires only ChIP-seq peaks.
+	•	Predicts target genes without expression data.
+
+⸻
+
+Required Input Files
+	1.	ChIP-seq peak file (BED format)
+	•	Minimum: chromosome, start, end.
+	•	Optional: peak name and score.
+	•	No header line recommended.
+	2.	Differential expression file
+	•	Must include:
+	•	Gene ID (official symbol or RefSeq)
+	•	Regulation direction (e.g., logFC or t-score)
+	•	Statistical significance (p-value, FDR)
+	•	Must contain all genes for background calculation.
+	3.	Genome FASTA file (BETA Plus only)
+	•	Needed for motif analysis.
+
+⸻
+
+Running BETA
+	•	Can be run:
+	•	On Cistrome web server
+	•	Locally via command line
+	•	Key command-line flags:
+	•	-p → peak file
+	•	-e → expression file
+	•	-k → expression file format
+	•	Column specifications if using custom format
+	•	Genome version (e.g., hg19, mm9)
+	•	Gene ID type flag
+	•	FASTA file (for BETA Plus)
+
+Typical runtime:
+	•	~15 minutes to 1 hour
+	•	~2 GB RAM required
+
+⸻
+
+Outputs
+	1.	Function prediction plot (PDF)
+	•	Compares regulatory potential distribution of up- and down-regulated genes vs background.
+	•	Predicts whether TF is activating, repressing, or both.
+	2.	Predicted direct target genes
+	•	Separate lists for up-regulated and down-regulated targets.
+	•	Ranked by regulatory potential.
+	3.	Associated peaks file
+	•	Shows which peaks contribute to regulation of each gene.
+	4.	Motif enrichment results (BETA Plus)
+	•	Identifies enriched motifs in:
+	•	Peaks linked to activated genes
+	•	Peaks linked to repressed genes
+	•	Can reveal cofactors.
+
+⸻
+
+Key Takeaway
+
+BETA provides an integrated framework that:
+	•	Links TF binding (ChIP-seq) to gene expression changes
+	•	Predicts TF functional role (activator/repressor)
+	•	Identifies direct gene targets
+	•	Reveals associated regulatory motifs
+
+It is a powerful tool for understanding transcription factor regulatory mechanisms.
+
+## Beta Assessment
+
+### BETA Q1
+
+BETA uses which of the following pieces of information to predict direct target genes?
+- ChIP-seq binding peaks (.bed files)
+- Gene Expression Data
+- Distance of binding site from transcription start site.
+
+BETA looks at ChIP-seq binding and based on their distance to transcription start site assigns regulatory potential. BETA also examines the expression (esp differential expression between factor on and factor off) data. Genes with high regulatory potential and high differential expression are called as direct targets.
+
+### BETA Q2
+
+Which variant of BETA would you use to find motifs in ChIP-seq peaks associated with upregulated genes?
+
+BETA plus: TF activating and repressive function prediction.
+
+
+
+
+
+
+
+
+
+
+
+
+
+

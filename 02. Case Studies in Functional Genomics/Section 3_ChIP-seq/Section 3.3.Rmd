@@ -1,0 +1,120 @@
+---
+title: "Section 3.3: Verified Assessment: ChIP-seq"
+author: "Haeun Lee"
+date: "2026-02-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## ChIP-seq Verified Assessment
+
+### Q1: Coexpressed genes
+
+You find a group of genes that share strong coexpression patterns in response to experimental conditions.
+Which of these is a reasonable hypothesis about the group of genes?
+
+These genes share a common regulatory mechanism.
+
+### Q2: ChIP-seq technique
+
+	1.	Crosslink proteins and DNA
+	2.	Break DNA into pieces with sonication
+	3.	Add TF-specific antibody
+	4.	Perform immunoprecipitation
+	5.	Reverse crosslinks
+	6.	Purify and amplify DNA
+	7.	Sequence DNA
+	
+### Q3: ChIP-seq control sample
+
+What is a typical control sample for a ChIP-seq experiment?
+
+A separate sample from the same experimental condition that has not been enriched by antibody treatment and immunoprecipitation
+
+### Q4: Shifting plus and minus strand peaks
+
+Suppose that in a ChIP-seq experiment, most plus strand and minus strand peaks are separated by 160bp.
+By how many bp should the reads be shifted in the 3’ direction to locate the likely transcription factor binding sites?
+
+80. The peak should be shifted by half of the separation distance.
+
+### Q5: Expected reads per 1 kb fragment
+
+The human genome is roughly 3 * 10^9 bp in size. Suppose a ChIP-seq experiment contains 15 * 10^6 reads.
+Assuming the reads are evenly distributed across the genome, how many reads are expected for any given 1 kb region?
+
+5.
+
+### Q6: MACS lambda parameters
+
+Why does MACS calculate local lambda parameters based on control samples rather than calculating a genome-wide lambda using the simple relationship from the previous question?
+
+- In practice, ChIP-seq fragment counts do not follow a simple Poisson distribution.
+- Sonication does not evenly or randomly break the chromatin into fragments because some regions of DNA are protected by proteins even in control samples.
+- Because the genome is so big and the number of ChIP-seq reads is relatively low, the expected number of counts for small genomic regions are not robust enough for reliable statistical inference.
+
+### Q7: ChIP-seq QC metrics
+
+Which of these ChIP-seq quality control metrics represents the signal-to-noise ratio?
+
+FRiP score.
+FRiP stands for "fraction of reads in peaks" and is a metric of the signal-to-noise ratio. Uniquely mapped reads measures the fraction of reads mapping to a unique genomic location, while uniquely mapped locations measures the number of unique locations in the genome represented by reads. PBC measures library complexity, and DNase I hypersensitivity site overlap measures whether peaks overlap known open chromatin regions.
+
+### Q8: ChIP-seq QC expected results
+
+Which of the following is true about ChIP-seq QC?
+
+- High-quality ChIP-seq replicates often only agree on about 60% of peaks.
+- Evolutionary conservation should be higher in the middle of a ChIP-seq peak than flanking regions.
+- In high-quality ChIP-seq data, most peaks will be in DNase I hypersensitive regions.
+
+Although many transcription factors show enrichment near the TSS, they can still bind other places. This is particularly notable in mammalian systems, where most peaks for transcription factors are typically in intronic or intergenic regions.
+
+### Q9: Regulatory potential
+
+In a mammalian system, which of these factors are components of the regulatory potential of a transcription factor (TF) on a given gene?
+
+- The distance between TF binding sites and the TSS
+- The number of TF binding sites associated with a certain gene
+
+The size of the ChIP-seq peak is not taken into account when calculating regulatory potential. Regulatory potential of a TF on a gene is a function of the number of TF binding sites and their distance from the TSS.
+
+### Q10: ChIP-seq motif analysis interpretation
+
+Suppose you perform a ChIP-seq analysis for a transcription factor called RUSH. You obtain results with satisfactory quality control metrics and find several peaks.
+
+You perform motif analysis on the peaks and find enrichment for the known RUSH binding motif. However, you also find a second enriched motif, which you determine is a known binding motif for another transcription factor called YYZ.
+
+Which of these options is the most reasonable interpretation of your observed results?
+
+- RUSH binds to YYZ, and the two transcription factors can bind DNA together in the same peaks.
+
+Because immunoprecipitation for RUSH pulls down DNA with both RUSH and YYZ peaks, a reasonable interpretation is that RUSH binds YYZ and that both factors bind to the same peaks in these experimental conditions. There are other possible explanations, but this is the most reasonable of the listed options.
+
+### Q11: Exploring Cistrome DB
+
+Go to cistrome.org/db. Find the ChIP-seq dataset from the transcription factor PRDM1 from human cervix. The correct dataset will have a publication date of 2014.
+
+How many of the 6 QC checks did this dataset pass? 6
+
+What percent of reads are uniquely mapped to the genome? 63.2
+
+The majority of reads are in the [intergenic] region.
+
+The motif analysis shows that the known PRDM1 motif is overrepresented in the peaks. What is the -10*log(pval) for the PRDM1 motif? 690.776
+
+### Q12: BETA output
+
+BETA returns several files after running. Which of these is not included in BETA output?
+
+- A list of biological processes associated with upregulated and downregulated genes.
+
+BETA does not return information about biological processes. This information could be inferred from the lists of upregulated and downregulated genes using resources like GO or KEGG.
+
+
+
+
+
