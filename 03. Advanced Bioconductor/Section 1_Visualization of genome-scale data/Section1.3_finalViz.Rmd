@@ -1,0 +1,145 @@
+---
+layout: page
+title: "Some final comments on genome-scale visualization"
+---
+
+```{r options, echo=FALSE, message=FALSE}
+library(knitr)
+opts_chunk$set(fig.path=paste0("figure/", sub("(.*).Rmd","\\1",basename(knitr:::knit_concord$get('infile'))), "-"))
+suppressPackageStartupMessages({
+suppressWarnings({
+library(BiocStyle)
+library(Biobase)
+library(randomForest)
+library(MLInterfaces)
+library(tissuesGeneExpression)
+library(limma)
+library(ph525x)
+library(RCircos)
+})
+})
+```
+
+
+## RCircos
+
+RCircos is not distributed in Bioconductor, but can
+be useful for developing compact displays of interactions
+among genomic elements.  I am unaware of any interfaces between
+Bioconductor data classes and RCircos, and this topic deserves
+attention.
+
+In the ph525x package we have added a selection of trans-eQTL
+findings from Westra et al. Nature 2013 (doi: 10.1038/ng.2756).
+We show a few SNP-gene associations from this study:
+```{r lksn,fig=TRUE,message=FALSE,fig.height=9,fig.width=9}
+library(ph525x)
+library(SNPlocs.Hsapiens.dbSNP144.GRCh37)
+library(BSgenome)
+data(westraTransSel)
+westraTransSel[1:3]
+sglToCircos(westraTransSel[1:5])
+```
+
+```{r}
+library(circlize)
+
+# Prepare data
+links <- do.call(rbind, lapply(names(westraTransSel[1:5]), function(snp) {
+  genes <- westraTransSel[[snp]]
+  data.frame(snp = snp, gene = genes)
+}))
+
+snps <- unique(links$snp)
+genes <- unique(links$gene)
+
+all_nodes <- c(snps, genes)
+
+# Initialize circle with spacing
+circos.clear()
+circos.par(gap.degree = 4)
+
+circos.initialize(factors = all_nodes,
+                  xlim = cbind(rep(0, length(all_nodes)), rep(1, length(all_nodes))))
+
+# ADD TRACK
+circos.trackPlotRegion(ylim = c(0, 1), panel.fun = function(x, y) {
+  sector.name <- get.cell.meta.data("sector.index")
+  
+  circos.text(
+    x = 0.5, y = 0.5,
+    labels = sector.name,
+    cex = 0.6,
+    facing = "clockwise",
+    niceFacing = TRUE
+  )
+}, bg.border = NA)
+
+# Draw links
+for (i in 1:nrow(links)) {
+  circos.link(
+    links$snp[i], 0.5,
+    links$gene[i], 0.5,
+    col = "#4682B480"
+  )
+}
+
+grid.col <- c(
+  setNames(rep("red", length(snps)), snps),
+  setNames(rep("blue", length(genes)), genes)
+)
+
+circos.trackPlotRegion(
+  ylim = c(0, 1),
+  bg.col = grid.col,
+  panel.fun = function(x, y) {
+    circos.text(get.cell.meta.data("xcenter"), 0.5,
+                get.cell.meta.data("sector.index"),
+                cex = 0.5, facing = "clockwise", niceFacing = TRUE)
+  }
+)
+```
+
+
+## ComplexHeatmap
+
+`r Biocpkg("ComplexHeatmap")` has a very nice vignette addressing many issues in combining heatmaps and repurposing the heatmap concept.  The oncoprint example in the vignette is particularly comrelling.  To use this interactively with TCGA, contact [the ISB](http://isb-cancer-genomics-cloud.readthedocs.io/en/latest/sections/FAQ.html) and obtain a cloud platform account.
+Then obtain the `r Biocpkg("cgcR")` package, load it, and run `isbApp()`.
+You will have to authenticate with google to get access to the BigQuery representation of TCGA.
+
+```{r}
+# BiocManager::install("ComplexHeatmap")
+# BiocManager::install("TCGAbiolinks")
+library(ComplexHeatmap)
+
+
+library(TCGAbiolinks)
+
+query <- GDCquery(
+  project = "TCGA-BRCA",
+  data.category = "Transcriptome Profiling",
+  data.type = "Gene Expression Quantification"
+)
+
+GDCdownload(query)
+data <- GDCprepare(query)
+
+# Old version
+# library(cgcR)
+# isbApp()
+```
+
+## WebGL and interaction with data
+
+In the short concluding video we use the MLInterfaces plspinHcube function to illustrate several aspects of interactivity: GUI for tuning, mouse-controlled rotation, and mouseover for point interrogation.
+
+```{r}
+library(MLInterfaces)
+library(threejs)
+library(mlbench)
+plspinHcube()
+```
+
+## EpiViz
+
+The `r Biocpkg("epivizr")` package interacts with the [epiviz](https://epiviz.github.io/) system and is capable of substantial feats of data integration and higher-level data interactivity.

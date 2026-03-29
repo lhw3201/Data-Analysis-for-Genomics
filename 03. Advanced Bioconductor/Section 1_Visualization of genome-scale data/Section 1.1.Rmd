@@ -1,0 +1,431 @@
+---
+title: "Section 1.1: Visualization of genome-scale data"
+author: "Haeun Lee"
+date: "2026-02-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Visualization of genome-scale data
+
+## Overview
+
+In this section, we learn about two major visualization packages for genomic data, ggbio and Gviz. We learn how to plot genomic features and overlay experimental data on these visualizations, and we explore tools for interactive visualization in R.
+
+### Learning goals
+
+- Visualize genomic features and next-generation sequencing data with ggbio and Gviz
+- Design functions for genome-scale visualization
+- Make and use interactive visualization tools with shiny
+
+```{r}
+BiocManager::install(c("AnnotationHub",
+                       "Biobase",
+                       "cluster",
+                       "erma",
+                       "GenomeInfoDb",
+                       "GenomicAlignments",
+                       "GenomicFeatures",
+                       "GenomicRanges",
+                       "genomicsclass/ERBS",
+                       "genomicsclass/tissuesGeneExpression",
+                       "ggbio",
+                       "Gviz",
+                       "hgu133a.db",
+                       "Homo.sapiens",
+                       "knitr",
+                       "org.Dm.eg.db",
+                       "org.Hs.eg.db",
+                       "pasillaBamSubset",
+                       "RNAseqData.HNRNPC.bam.chr14",
+                       "Rsamtools",
+                       "rtracklayer",
+                       "scales",
+                       "shiny",
+                       "Sushi",
+                       "TxDb.Dmelanogaster.UCSC.dm3.ensGene",
+                       "TxDb.Hsapiens.UCSC.hg19.knownGene"))
+```
+
+## Visualizing NGS data
+
+### Visualizing NGS data part 1
+
+```{r getpack,echo=FALSE,results="hide"}
+suppressWarnings({
+suppressPackageStartupMessages({
+library(pasillaBamSubset)
+library(TxDb.Dmelanogaster.UCSC.dm3.ensGene)
+library(org.Dm.eg.db)
+})
+})
+```
+
+Data to be used:
+
+```{r}
+# BiocManager::install("pasillaBamSubset")
+# BiocManager::install("TxDb.Dmelanogaster.UCSC.dm3.ensGene")
+# BiocManager::install("org.Dm.eg.db")
+library(pasillaBamSubset)
+library(TxDb.Dmelanogaster.UCSC.dm3.ensGene)
+fl1 <- untreated1_chr4()
+fl2 <- untreated3_chr4()
+```
+
+4 ways to look at NGS coverage: using the standalone Java program IGV, using simple `plot` commands, and using the `Gviz` and `ggbio` packages in Bioconductor
+
+* IGV *
+
+Copy these files from the R library directory to the current working directory. First set the working directory to the source file location. We need to use the `Rsamtools` library to index the BAM files for using IGV.
+
+```{r}
+file.copy(from=fl1,to=basename(fl1))
+file.copy(from=fl2,to=basename(fl2))
+library(Rsamtools)
+indexBam(basename(fl1))
+indexBam(basename(fl2))
+```
+
+IGV is freely available: https://igv.org/app/
+
+Using IGV, look for gene *lgs*.
+
+Note that if you have trouble downloading IGV, another option for visualization is the UCSC Genome Browser: http://genome.ucsc.edu/cgi-bin/hgTracks 
+
+The UCSC Genome Browser is a great resource, having many tracks involving gene annotations, conservation over multiple species, and the ENCODE epigenetic tracks already available. However, the UCSC Genome Browser requires that you upload your genomic files to their server, or put your data on a publicly available server. This is not always possible if you are working with confidential data.
+
+## Visualizing NGS data part 2
+
+### Simple plot
+
+Next we will look at the same gene using the simple `plot` function in R.
+
+```{r}
+library(GenomicRanges)
+```
+
+Note: if you are using Bioconductor version 14, paired with R 3.1, you should also load this library. You do not need to load this library, and it will not be available to you, if you are using Bioconductor version 13, paired with R 3.0.x.
+
+```{r}
+library(GenomicAlignments)
+```
+
+We read in the alignments from the file `fl1`. Then we use the `coverage` function to tally up the basepair coverage. We then extract the subset of coverage which overlaps our gene of interest, and convert this coverage from an `RleList` into a `numeric` vector. Remember from Week 2, that `Rle` objects are compressed, such that repeating numbers are stored as a number and a length.
+
+```{r}
+x <- readGAlignments(fl1)
+xcov <- coverage(x)
+z <- GRanges("chr4",IRanges(456500,466000))
+# Bioconductor 2.14
+xcov[z]
+# Bioconductor 2.13
+xcov$chr4[ranges(z)]
+xnum <- as.numeric(xcov$chr4[ranges(z)])
+plot(xnum)
+```
+
+We can do the same for another file:
+
+```{r}
+y <- readGAlignmentPairs(fl2)
+ycov <- coverage(y)
+ynum <- as.numeric(ycov$chr4[ranges(z)])
+plot(xnum, type="l", col="blue", lwd=2)
+lines(ynum, col="red", lwd=2)
+```
+
+We can zoom in on a single exon:
+
+```{r}
+plot(xnum, type="l", col="blue", lwd=2, xlim=c(6200,6600))
+lines(ynum, col="red", lwd=2)
+```
+
+### Extracting the gene of interest using the transcript database
+
+Suppose we are interested in visualizing the gene *lgs*. We can extract it from the transcript database `TxDb.Dmelanogaster.UCSC.dm3.ensGene` on Bioconductor, but first we need to look up the Ensembl gene name. We will use the functions that we learned in Week 7 to find the name.
+
+```{r}
+# BiocManager::install("biomaRt")
+library(biomaRt)
+m <- useMart("ensembl", dataset = "dmelanogaster_gene_ensembl")
+lf <- listFilters(m)
+lf[grep("name", lf$description, ignore.case=TRUE),]
+map <- getBM(mart = m,
+ attributes = c("ensembl_gene_id", "flybasename_gene"),
+ filters = "flybasename_gene",
+ values = "lgs")
+
+# Instead of using biomaRt, you can also use this code to find the ENTREZ ID and Ensembl ID of the lgs gene:
+library(org.Dm.eg.db)
+map = select(org.Dm.eg.db, keys="lgs", keytype="SYMBOL", columns=c("ENTREZID", "ENSEMBL"))
+map
+```
+
+
+Now we extract the exons for each gene, and then the exons for the gene *lgs*.
+
+```{r}
+library(GenomicFeatures)
+grl <- exonsBy(TxDb.Dmelanogaster.UCSC.dm3.ensGene, by="gene")
+gene <- grl[[map[1,]$ENSEMBL]]
+gene # same 6 exons as the plot we drew
+```
+
+Finally we can plot these ranges to see what it looks like:
+
+```{r}
+rg <- range(gene)
+plot(c(start(rg), end(rg)), c(0,0), type="n", xlab=seqnames(gene)[1], ylab="")
+arrows(start(gene),rep(0,length(gene)),
+       end(gene),rep(0,length(gene)),
+       lwd=3, length=.1) # plot 6 exons
+```
+
+But actually, the gene is on the minus strand. We should add a line which corrects for minus strand genes:
+
+```{r}
+plot(c(start(rg), end(rg)), c(0,0), type="n", xlab=seqnames(gene)[1], ylab="")
+arrows(start(gene),rep(0,length(gene)),
+       end(gene),rep(0,length(gene)),
+       lwd=3, length=.1, 
+       code=ifelse(as.character(strand(gene)[1]) == "+", 2, 1)) # considering strandedness
+```
+
+## Visualizing NGS data part 3
+
+### Gviz
+
+We will briefly show two packages for visualizing genomic data in Bioconductor. Note that each of these have extensive vignettes for plotting many kinds of data. We will show here how to make the coverage plots as before:
+
+```{r}
+# BiocManager::install("Gviz")
+library(Gviz)
+gtrack <- GenomeAxisTrack()
+atrack <- AnnotationTrack(gene, name = "Gene Model")
+plotTracks(list(gtrack, atrack))
+```
+
+Extract the coverage. `Gviz` expects that data will be provided as `GRanges` objects, so we convert the `RleList` coverage to a `GRanges` object:
+
+```{r}
+xgr <- as(xcov, "GRanges")
+ygr <- as(ycov, "GRanges")
+dtrack1 <- DataTrack(xgr[xgr %over% z], name = "sample 1")
+dtrack2 <- DataTrack(ygr[ygr %over% z], name = "sample 2")
+plotTracks(list(gtrack, atrack, dtrack1, dtrack2))
+plotTracks(list(gtrack, atrack, dtrack1, dtrack2), type="polygon")
+```
+
+### ggbio
+
+```{r}
+# # BiocManager::install("ggbio")
+# library(ggbio)
+# library(ggplot2)
+# autoplot(gene)
+# autoplot(fl1, which=z)
+# autoplot(fl2, which=z)
+```
+
+
+## Visualizing NGS Assessment
+
+We recall the HepG2 GRanges from the ERBS package, which provides very limited information in the narrowPeak format on the locations and sizes of ESRRA binding to DNA from a liver cell line.
+
+A higher resolution view of the ESRRA binding events is available in the bigWig format here External link (319 MB). The bigWig format gives us coverage information, similar to the coverage we saw from RNA-seq in the previous videos.
+
+Download that bigWig file to your current working folder and import to a GRanges:
+
+```{r}
+library(rtracklayer)
+h2bw = import("wgEncodeSydhTfbsHepg2ErraForsklnStdSig.bigWig")
+h2bw
+```
+
+Note that the output in bigWig presents much smaller genomic intervals than the narrowPeak data. We now have the coverage of ChIP-seq reads at each location in the genome which passed some minimal threshold (not the same as "peaks" as we will see below). If the coverage is identical at adjacent basepairs, then the region will be as wide as possible. The coverage information is present in the 'score' metadata column.
+
+### Q1: BigWig representation of ESRRA binding
+
+What is the median width in bases of ranges in h2bw?
+
+```{r}
+median(width(h2bw))
+```
+
+### Q2: BigWig scores in narrow peaks
+
+We can compare the bigWig intervals to the reported peaks.
+
+```{r}
+# if you don't have ERBS: install_github("genomicsclass/ERBS")
+library(ERBS) 
+data(HepG2)
+fo = findOverlaps(h2bw, HepG2)
+inpeak = queryHits(fo)
+```
+
+What is the median score for the h2bw bigWig data in regions identified as peaks in HepG2?
+
+```{r}
+median(h2bw[inpeak]$score)
+```
+
+### Q3: BigWig scores outside narrow peaks
+
+What is the median score for the h2bw bigWig data in regions NOT identified as peaks in HepG2?
+
+```{r}
+median(h2bw[-inpeak]$score)
+```
+
+### Q4: The BigWIg scores near ESRRA
+
+Find the location of the gene with the SYMBOL ESRRA in hg19 (hint: select the TXCHROM and TXSTART columns in Homo.sapiens, use the smallest TXSTART returned), and the narrowPeak range that includes it in HepG2. Obtain the scores from h2bw that lie in this peak.
+
+What is the maximum score in this peak region?
+
+```{r}
+library(GenomicFeatures)
+library(Homo.sapiens)
+
+# Find ESRRA location
+esrra <- select(Homo.sapiens,
+                keys = "ESRRA",
+                keytype = "SYMBOL",
+                columns = c("TXCHROM","TXSTART"))
+
+esrra_loc <- esrra[which.min(esrra$TXSTART), ]
+esrra_loc
+
+# Convert this to a GRanges object
+library(GenomicRanges)
+
+gene_pos <- GRanges(seqnames = esrra_loc$TXCHROM,
+                    ranges = IRanges(start = esrra_loc$TXSTART,
+                                     end = esrra_loc$TXSTART))
+
+# Find which HepG2 peak contains it
+hit <- findOverlaps(gene_pos, HepG2)
+hit
+
+peak <- HepG2[subjectHits(hit)]
+peak
+
+# Get h2bw scores inside that peak
+hits <- findOverlaps(h2bw, peak)
+scores <- mcols(h2bw)$score[queryHits(hits)]
+
+max(scores)
+```
+
+Example answer:
+```{r}
+# library(Homo.sapiens)
+# select(Homo.sapiens, keys="ESRRA", keytype="SYMBOL", columns=c("TXCHROM", "TXSTART")) 
+# narrind = queryHits(findOverlaps(HepG2, GRanges("chr11", IRanges(64073044, width=1))))
+# bwind = queryHits(fo)[ subjectHits(fo)==narrind] 
+# max( h2bw$score[ bwind ] )
+```
+
+### Q5: Plotting coverage and locating extremes
+
+We have now found the coverage of the ChIP-seq peak nearest to the ESRRA gene. We can write this as:
+
+```{r}
+HepG2_5 = which(subjectHits(fo) == 5) # findOverlaps(h2bw, HepG2); indexes of h2bw overlapping with 5th HepG2
+peakcov = h2bw[queryHits(fo)[HepG2_5]]
+```
+
+We can plot the coverage vs the middle point of each range:
+
+```{r}
+plot( 0.5*( start(peakcov) + end(peakcov) ), peakcov$score)
+```
+
+From the information in peakcov, what is the location of the basepair with the highest coverage?
+
+```{r}
+maxcov = which.max(peakcov$score)
+0.5*( start(peakcov) + end(peakcov) )[maxcov]
+# OR
+peakcov[ which.max(peakcov$score) ]
+```
+
+Note that this information (just the location of the highest peak, not the coverage details) is annotated in the narrowPeak file. The "peak" column of HepG2 annotates the location of the highest coverage relative to the leftmost point of the range:
+
+```{r}
+start(HepG2[5]) + HepG2[5]$peak
+```
+
+### Q6: A quick look at Sushi
+
+The Sushi package targets the development of multipanel figures for integrative genomics. We will examine it somewhat critically in these exercises. Use BiocManager::install("Sushi") to install if not already present.
+
+The package provides a number of useful example files. One is Sushi_ChIPSeq_severalfactors.bed
+
+Install the Sushi package and load the Sushi_ChIPSeq_severalfactors.bed example data with data(...).
+
+What is the reference build on which the coordinates of Sushi_ChIPSeq_severalfactors.bed are based?
+Hint: Look at the help file ?Sushi_ChIPSeq_severalfactors.bed.
+
+```{r}
+library(Sushi)
+
+data(Sushi_ChIPSeq_severalfactors.bed)
+?Sushi_ChIPSeq_severalfactors.bed
+```
+
+### Q7: Running a plotBed example
+
+```{r}
+chrom = "chr15"
+chromstart = 72800000
+chromend = 73100000
+plotBed(beddata = Sushi_ChIPSeq_severalfactors.bed,
+      chrom = chrom,chromstart = chromstart,chromend =chromend,
+      rownumber  = Sushi_ChIPSeq_severalfactors.bed$row, 
+      type = "region", color=Sushi_ChIPSeq_severalfactors.bed$color, row="given", plotbg="grey95", 
+      rowlabels=unique(Sushi_ChIPSeq_severalfactors.bed$name),
+      rowlabelcol=unique(Sushi_ChIPSeq_severalfactors.bed$color),rowlabelcex=0.75)
+```
+
+How many bars do you see associated with EP300?
+
+```{r}
+table(Sushi_ChIPSeq_severalfactors.bed$name)
+```
+
+### Q8: Converting the bed-like data to GRanges
+
+The Sushi_ChIPSeq_severalfactors.bed data are provided in a data.frame instance.
+
+As we discussed in 525.5, Bioconductor objects have several benefits relative to data frames for representing genomic data, so we will convert this to a GRanges object:
+
+```{r}
+ss = Sushi_ChIPSeq_severalfactors.bed  # abbreviate
+library(GenomicRanges)
+k562gr = GRanges(ss$chrom, IRanges(ss$start, ss$end))
+k562grl = split(k562gr, ss$name) 
+```
+
+How many distinct regions of the genome as excerpted in this data are identified as bound by any factor?
+
+```{r}
+length(reduce(k562gr))
+```
+
+### Q9: The Gviz approach to the multiple factor binding display
+
+Load the Gviz package and run
+
+```{r}
+plotTracks(lapply(k562grl, AnnotationTrack))
+plotTracks(lapply(1:length(k562grl), function(i) AnnotationTrack(reduce(k562grl[[i]]), name=names(k562grl)[i])))
+```
+
+

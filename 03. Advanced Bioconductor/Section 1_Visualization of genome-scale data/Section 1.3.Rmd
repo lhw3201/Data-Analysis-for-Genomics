@@ -1,0 +1,326 @@
+---
+title: "Section 1.3: Interactive multivariate visualization with shiny"
+author: "Haeun Lee"
+date: "2026-02-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Interactive multivariate visualization with shiny
+
+## Graphical user interfaces with Bioconductor and shiny
+Introducing the shiny-based GUI concept for multivariate analysis
+
+```{r setup,echo=FALSE,results="hide"}
+suppressWarnings({
+suppressMessages({
+suppressPackageStartupMessages({
+library(shiny)
+library(cluster)
+library(ph525x)
+})
+})
+})
+```
+
+### Example
+
+```{r lkb,eval=FALSE}
+mtcars    # built-in in R
+pairs(mtcars[,1:5])    # view relationships between first 5 variables 
+
+# open an interactive pair plot and clustering visualization
+library(ph525x)
+dfHclust(mtcars)
+
+# repeat with a different built-in data frame
+dfHclust(iris)
+```
+
+## Programming shiny
+
+In this subsection we will break up the main `dfHclust` function and explain its elements.  The code was written in a very naive manner but even so has three virtues:
+
+* it is relatively short and self-contained
+* it works and does something useful in interactive data exploration
+* it is easy to extend by replicating and modifying short subparts
+
+Some aspects that are likely to need improvement
+
+* handling of global variables for use in the `ui` component
+* excessive repetition of data.frame subsetting in the `server` component
+
+### Starting out
+
+We have a simple fixed interface and fail if we don't get a data.frame with at least two columns.  We fail if the necessary software is not in place.
+```
+dfHclust = function(df) {
+# validate input
+   stopifnot(inherits(df, "data.frame"))
+   stopifnot(ncol(df)>1)
+# obtain software
+   require(shiny)
+   require(cluster)
+```
+### Some vectors to populate interface option sets
+
+```
+# global variables ... 
+   nms = names(df)
+   cmeths = c("ward.D", "ward.D2",
+             "single", "complete", "average", "mcquitty",
+             "median", "centroid")
+   dmeths = c("euclidean", "maximum", "manhattan", "canberra",
+             "binary")
+```
+
+### The layout of the user interface
+
+There are several high-level options that can control
+the browser interface.  We'll use a flexible approach
+called `fluidPage`; see also the shinydashboard package.
+
+```
+#
+# main shiny components: ui and server
+#   ui: defines page layout and components
+#   server: defines operations
+#
+   ui <- fluidPage(
+#
+# we will have four components on sidebar: selectors for 
+# distance, agglomeration method, height for tree cut, and variables to use
+```
+
+#### Title and sidebar
+```
+#
+     titlePanel(paste(substitute(df), "hclust")),
+     sidebarPanel(
+          helpText(paste("Select distance:" )),
+          fluidRow(
+             selectInput("dmeth", NULL, choices=dmeths,
+               selected=dmeths[1])),
+          helpText(paste("Select clustering method:" )),
+          fluidRow(
+             selectInput("meth", NULL, choices=cmeths,
+               selected=cmeths[1])),
+          helpText(paste("Select height for cut:" )),
+          fluidRow(
+             numericInput("cutval", NULL, value=40, min=0, max=Inf, step=1)),
+          helpText(paste("Select variables for clustering from", substitute(df), ":" )),
+          fluidRow(
+             checkboxGroupInput("vars", NULL, choices=nms,
+               selected=nms[1:2]))
+            ),
+```
+#### Tabs for the primary displays
+
+```
+#
+# main panel is a simple plot
+#
+     mainPanel(
+       tabsetPanel(
+        tabPanel("tree", 
+         plotOutput("plot1")),
+        tabPanel("pairs", 
+         plotOutput("pairsplot")),
+        tabPanel("silh", 
+         plotOutput("silplot"))
+         )
+       )
+  )  # end fluidPage
+```
+
+### Defining the server
+   
+```
+#
+# a function with up to three arguments (input, output, session)
+# can be used to define the server component of the app
+# renderPlot makes it reactive, so when input components are altered,
+# data frame in use and plot are updated
+#
+   server <- function(input, output) {
+     output$plot1 <- renderPlot({
+       xv = df[,input$vars]
+       plot(hclust(dist(data.matrix(xv),method=input$dmeth), method=input$meth),
+         xlab=paste(input$dmeth, "distance;", input$meth, "clustering"))
+       abline(h=input$cutval, lty=2, col="gray")
+     })
+     output$pairsplot <- renderPlot({
+       xv = df[,input$vars]
+       pairs(data.matrix(xv))
+     })
+     output$silplot <- renderPlot({
+       xv = df[,input$vars]
+       dm = dist(data.matrix(xv),method=input$dmeth)
+       hc = hclust(dist(data.matrix(xv),method=input$dmeth), method=input$meth)
+       ct = cutree(hc, h=input$cutval)
+       plot(silhouette(ct, dm))
+     })
+   }
+   
+   shinyApp(ui, server)
+}
+```
+
+### Some gory details
+
+A "shiny app" consists of two main components, a user interface and
+a server function.  To use the infrastructure the `shiny`
+library must be attached to an R session.
+The application can be started in various ways; we use
+`shinyApp` and supply two arguments, `ui` and `server`.
+
+* `ui` is an instance of `shiny.tag.list`.  You can get a feel
+for this by inspecting the result of `fluidPage()`.
+
+* `server` is a function of three arguments `input`, `output`
+and `session`; the latter is optional.  `input` is a list
+with bindings given values in the `ui` component, and `output`
+will be populated with elements in the server for rendering in
+the UI.
+
+## Experimentally modifying a shiny app in Rstudio
+
+```{r lkb,eval=FALSE}
+library(ph525x)
+dfh2 = dfHclust    # copy of dfHclust
+
+fix(dfh2)
+# apply following edit in the interactive window
+# helpText(paste("Select variables for clustering from", 
+#                substitute(df), ":")), fluidRow(selectInput("vars",     # replace checkboxInput with selectInput
+#                NULL, choices = nms, selected = nms[1:2], multiple=TRUE)))    # add multiple argument
+
+
+dfHclust(mtcars)    # checkboxes for variables
+dfh2(mtcars)    # checkboxes replaced with dropdown/search
+```
+
+## Multivariate visualization with gene expression data
+
+See "Section1.3_esHclust.Rmd"
+
+## Closing remarks on genome-scale visualization
+
+See "Section1.3_finalViz.Rmd"
+
+## Shiny for gene expression clustering: Assessment
+
+### Setup of the expression data and app
+
+```{r}
+library(Biobase)
+library(hgu133a.db)
+library(ph525x)
+
+esHclust = function(es) {
+  emat = t(exprs(es))
+  rownames(emat) = sampleNames(es)
+  dd = data.frame(emat)
+  dfHclust(dd)
+}
+
+library(tissuesGeneExpression)
+data(tissuesGeneExpression)
+tgeES = ExpressionSet(e)
+annotation(tgeES) = "hgu133a.db"
+pData(tgeES) = tab
+featureNames(tgeES) =
+  make.names(mapIds(hgu133a.db, keys=featureNames(tgeES),
+    keytype="PROBEID", column="SYMBOL"), unique=TRUE)
+sampleNames(tgeES) = make.names(tgeES$Tissue, unique=TRUE)
+```
+
+How many of the feature names of tgeES are missing (NA)?
+
+```{r}
+sum(featureNames(tgeES) == "NA")
+sum(is.na(rownames(exprs(tgeES))))
+```
+
+The originating data are limited to probes with gene identifiers. The make.names call ensures that duplicates get unique suffixes of the form .[n].
+
+### Verifying initial configuration
+
+Run esHclust(tgeES[1:50,1:50]). Set the cutoff height to 2.
+
+What is the average silhouette value for this clustering/partition? 0.43
+
+```{r}
+esHclust(tgeES[1:50,1:50])
+
+# OR
+
+ex = exprs(tgeES[1:50,1:50])
+h = hclust(dist(t(ex[1:2,])), method="ward.D")
+cc = cutree(h, h=2) 
+summary(silhouette(cc, dist(t(ex[1:2,]))))
+```
+
+### The 50-gene signature for tissue differentiation
+
+Instead of using the first 50 genes, exploit the ExpressionSet interface to make a targeted investigation. We used limma to identify 50 genes for which a null hypothesis of common mean expression across tissues is rejected. The gene set is identified via
+
+```{r}
+library(limma)
+mm = model.matrix(~Tissue, data=pData(tgeES))
+f1 = lmFit(tgeES, mm)
+ef1 = eBayes(f1)
+sig50 = rownames(ef1$coef[order(ef1$F,decreasing=TRUE)[1:50],])
+```
+
+Now we can run
+
+```{r}
+esHclust( tgeES[sig50,] )
+```
+
+Set the height for cut to 2. The average silhouette for the top 2 genes, Euclidean distance, and ward.D clustering is 0.35.
+
+How many clusters are formed by cutting the tree at 2?
+
+7
+
+## Genes ranked 49th and 50th
+
+Scroll to the bottom of the feature list and check the bottom two genes: EEF1G.2 and KLRC4. Then uncheck the top two genes RPL37A and RPL41. Change the clustering method to ward.D2
+
+What is the average silhouette value for the clustering based on these choices? 0.55
+
+```{r}
+ex = exprs(tgeES[sig50,])
+h = hclust(dist(t(ex[49:50,])), method="ward.D2")
+cc = cutree(h, h=2)
+summary(silhouette(cc, dist(t(ex[49:50,]))))
+```
+
+### Random forests for the 5 gene signature
+
+In the book chapter we showed how the random forests algorithm could be used to assess the set of 50 genes with greatest F values for discriminating tissue-specific means. Try it with the 5 gene signature:
+
+```{r}
+sig5 = c("IL26", "ZNF674", "UBC.1", "C7orf25.1", "RPS13")
+library(MLInterfaces)
+library(randomForest)
+set.seed(1234)
+rf2 = MLearn(Tissue~., tgeES[sig5,], randomForestI, xvalSpec("NOTEST"))
+RObject(rf2)
+```
+
+In percent, what is the out of bag estimate of the misclassification error rate? 37.04%
+
+
+
+
+
+
+
+
+

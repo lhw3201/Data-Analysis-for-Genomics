@@ -1,0 +1,301 @@
+---
+title: "Section 1.4: Verified assessment"
+author: "Haeun Lee"
+date: "2026-02-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Genome-scale visualization assessment part 1
+
+### Q1: Plotting gene models
+
+Create a function plotGeneModel() that takes a gene symbol as its only argument and returns a plot of the corresponding gene models including chromosome and coordinate labels. Then, use plotGeneModel() to determine whether the following statements are true or false.
+
+```{r}
+# load packages and gene symbol converter
+library(ggbio)
+library(Homo.sapiens)
+data(genesymbol, package="biovizBase")
+
+plotGeneModel = function(input){
+  # specify gene by symbol
+  gene = genesymbol[input]
+
+  # plot gene model
+  ap1 = autoplot(Homo.sapiens, which=gene, gap.geom="chevron")
+  attr(ap1, "hasAxis") = TRUE    # add location axis
+  ap1 + xlab(seqnames(gene))    # add chromosome label
+}
+
+plotGeneModel("NANOG")
+```
+
+Which of the following are TRUE?
+
+- All isoforms of the INS gene have 2 or 3 exons.
+- A MYCNOS gene model is contained within an intron of one MYCN gene model.
+
+### Q2: Plotting gene model with margins
+
+Create a new function called biggerGeneModel(). Start with your plotGeneModel() function and modify it by adding 5000 bases to each side of the gene of interest. You can do this by modifying the which= argument of autoplot() to gene+5000.
+
+Use biggerGeneModel() to plot the region of the BAD gene.
+
+```{r}
+biggerGeneModel = function(input){
+  # specify gene by symbol
+  gene = genesymbol[input]
+
+  # plot gene model
+  ap1 = autoplot(Homo.sapiens, which=gene+5000, gap.geom="chevron")
+  attr(ap1, "hasAxis") = TRUE    # add location axis
+  ap1 + xlab(seqnames(gene))    # add chromosome label
+}
+
+biggerGeneModel("BAD")
+```
+
+Which of these genes is within 5000 bp of the BAD gene but does not overlap BAD?
+
+PLCB3 (within 5000 bp upstream of BAD)
+
+### Q3-5 Setup: NANOG ChIP-seq binding sites
+
+NANOG is a transcription factor involved in embryonic stem cell proliferation and self-renewal. ChIP-seq data for NANOG is available from AnnotationHub:
+
+```{r}
+library(AnnotationHub)
+ah = AnnotationHub()
+query(ah, "nanog")
+```
+
+We will inspect two broadPeak files which represent two ChIP-seq replicates of NANOG binding in human embryonic stem cells (hESCs):
+
+```{r}
+rep1 = ah[["AH25009"]]
+rep2 = ah[["AH25010"]]
+
+# keep only autosomes, X, Y, M
+rep1 = keepStandardChromosomes(rep1)lhw
+rep2 = keepStandardChromosomes(rep2)
+
+# inspect objects
+rep1
+rep2
+```
+
+Note that these are GRanges objects, and in addition to the range information they contain a signalValue column representing the binding signal strength for that peak.
+
+### Q4: Plotting NANOG binding sites on a gene model
+
+Draw a plot of the NANOG binding sites in rep2 that overlap the region within 5000 bp of the NANOG gene.
+
+```{r}
+gene = genesymbol["NANOG"]
+    
+ap1 = autoplot(Homo.sapiens, which=gene+5000, gap.geom="chevron")    # gene model track
+overlaps = subsetByOverlaps(rep2, gene+5000)
+ap2 = autoplot(overlaps)    # NANOG binding site track
+tracks(`NANOG BS`=ap2, TX=ap1, heights=c(1,3))
+```
+
+Create a function nanogGeneModel() that takes a gene name as its only argument and returns a plot of the NANOG binding site track and the gene model track. Then, use nanogGeneModel() to determine the number of NANOG binding peaks within 5000 bp of these genes:
+
+```{r}
+nanogGeneModel = function(input){
+  gene = genesymbol[input]
+    
+  ap1 = autoplot(Homo.sapiens, which=gene+5000, gap.geom="chevron")    # gene model track
+  overlaps = subsetByOverlaps(rep2, gene+5000)
+  ap2 = autoplot(overlaps)    # NANOG binding site track
+  tracks(`NANOG BS`=ap2, TX=ap1, heights=c(1,3))
+}
+```
+
+BAD
+
+```{r}
+nanogGeneModel("BAD")
+nanogGeneModel("MYC")
+nanogGeneModel("SET")
+nanogGeneModel("SIRT1")
+```
+
+### Q5: Debugging a graphics query
+
+If you try running:
+
+```{r}
+nanogGeneModel("TP53")
+
+debug(nanogGeneModel)
+```
+
+## Genome-scale visualization assessment part 2
+
+This code creates a Gviz plot of genes within 500,000 bp of the NOM1 gene and the signal values of any NANOG binding peaks within that range in replicate 1, rep1:
+
+```{r}
+# load libraries and txdb
+library(Gviz)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+txdb = TxDb.Hsapiens.UCSC.hg19.knownGene
+
+# specify target gene name and desired range around gene
+gene_name = "NOM1"
+range = 500000
+
+# find target gene ENTREZ ID
+gene = AnnotationDbi::select(Homo.sapiens, keys=gene_name, keytype="SYMBOL", columns="ENTREZID")
+
+# find all genes and gene symbols within range of target gene
+all_genes = genes(txdb)
+gene_loc = genes(txdb, filter=list(gene_id = gene$ENTREZID))
+neighbors = subsetByOverlaps(all_genes, gene_loc + range)
+neighbors$symbol = mapIds(Homo.sapiens, keys=neighbors$gene_id, keytype="ENTREZID",
+  column="SYMBOL")
+
+# make ideogram track
+idxTrack = IdeogramTrack(genome="hg19", chr=seqnames(gene_loc))    # this will take time
+
+# find rep1 NANOG peaks in range
+nanog_peaks_rep1 = subsetByOverlaps(rep1, gene_loc + range)
+signal_vals_rep1 = nanog_peaks_rep1[,3]
+
+# plot tracks together
+plotTracks(list(idxTrack,
+                GenomeAxisTrack(), 
+                DataTrack(signal_vals_rep1, name="NANOG peak values"), 
+                GeneRegionTrack(neighbors, showId=TRUE, name=paste("genes near", gene_name)),
+                GenomeAxisTrack()))
+```
+
+### Q6: Adding a track to a Gviz plot
+
+Alter the code above to add another track displaying the NANOG binding peaks from replicate 2, rep2.
+
+```{r}
+# find rep1 NANOG peaks in range
+nanog_peaks_rep2 = subsetByOverlaps(rep2, gene_loc + range)
+signal_vals_rep2 = nanog_peaks_rep2[,3]
+
+# plot tracks together
+plotTracks(list(idxTrack,
+                GenomeAxisTrack(), 
+                DataTrack(signal_vals_rep1, name="NANOG Peaks Rep 1"), 
+                DataTrack(signal_vals_rep2, name="NANOG Peaks Rep 2"), 
+                GeneRegionTrack(neighbors, showId=TRUE, name=paste("genes near", gene_name)),
+                GenomeAxisTrack()))
+```
+
+### Q7-9 Setup
+
+The RNAseqData.HNRNPC.bam.chr14 package contains several BAM files with RNA sequencing reads on chromosome 14 from HNRNPC knockdown and control cells. For more information, you can read the package vignette External link.
+
+Copy the first BAM file from the package into your working directory and index it:
+
+```{r}
+library(RNAseqData.HNRNPC.bam.chr14)
+fl = RNAseqData.HNRNPC.bam.chr14_BAMFILES[1]    # name of first BAM file
+file.copy(fl, basename(fl))    # copy to your working directory
+
+library(Rsamtools)
+indexBam(basename(fl))    # index BAM file
+```
+
+In addition, download the list of exons by gene from TxDb.Hsapiens.UCSC.hg19.knownGene:
+
+```{r}
+library(org.Hs.eg.db)
+library(GenomicFeatures)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+grl = exonsBy(TxDb.Hsapiens.UCSC.hg19.knownGene, by="gene")
+```
+
+### Q7: RNA-seq coverage
+
+Use readGAlignments() to read in the BAM file from basename(fl) as x. Compute the coverage of x and save it as xcov.
+
+In xcov$chr14, how many bases at the start of the chromosome have zero reads?
+
+```{r}
+library(GenomicAlignments)
+x = readGAlignments("ERR127306_chr14.bam")
+xcov = coverage(x)
+xcov$chr14
+```
+
+### Q8: Plotting a gene model with Gviz
+
+We will build a plot with Gviz that shows RNA-seq coverage data with gene model information. We will start by extracting the information we'll to construct the gene model track. Given a gene with the symbol gene_sym, extract the gene's exons as a GRanges object, ex, and the full range of the gene as z.
+
+```{r}
+gene_sym = "CALM1"
+map = select(org.Hs.eg.db, keys=gene_sym, keytype="SYMBOL", columns="ENTREZID")
+ex = grl[[map[1,]$ENTREZID]]
+z = range(ex)
+```
+
+Set gene_sym to CALM1, the gene encoding calmodulin 1. Use plotTracks() from the Gviz package to create a plot with two tracks: a genome axis track and an annotation track displaying ex with the name "Gene Model".
+
+```{r}
+library(Gviz)
+plotTracks(list(
+  GenomeAxisTrack(), 
+  AnnotationTrack(ex, name="Gene Model"))
+)
+
+# OR
+
+gtrack = GenomeAxisTrack()
+atrack = AnnotationTrack(ex, name = "Gene Model")
+plotTracks(list(gtrack, atrack))
+```
+
+Inspect the plot. Which of the following are true?
+
+- There are 8 exons in CALM1.
+- The largest exon of CALM1 is the last exon.
+
+
+### Q9: Adding a data track
+
+The following code creates a data track for RNA-seq coverage in the range overlapping the gene of interest.
+
+```{r}
+xgr = as(xcov, "GRanges")
+overlaps = xgr[xgr %over% z]
+start(overlaps[1]) = start(z)    # restricts range to start of gene
+end(overlaps[length(overlaps)]) = end(z)    # restricts range to end of gene
+dtrack = DataTrack(overlaps, name = "Coverage")
+```
+
+Use plotTracks() from the Gviz package to display the RNA-seq coverage with the genome and CALM1 annotation tracks from above.
+
+```{r}
+plotTracks(list(gtrack, atrack, dtrack))
+```
+
+Which 2 exons have the lowest coverage?
+
+- 2, 3
+
+Which exon has fairly uniform coverage of about 200-300 reads across the entire exon?
+
+- 5
+
+Which exon has a region with coverage over 1000 but also has regions with near zero coverage?
+
+- 8
+
+
+
+
+
+
+
+
