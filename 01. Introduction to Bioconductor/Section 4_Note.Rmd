@@ -1,0 +1,966 @@
+---
+title: "Notes: Annotation"
+author: "Haeun Lee"
+date: "2026-01-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Types
+```{r}
+# Bioconductor packages
+BiocManager::install(c("BSgenome.Hsapiens.UCSC.hg19",
+                       "org.Hs.eg.db",
+                       "TxDb.Hsapiens.UCSC.hg19.knownGene",
+                       "AnnotationDbi",
+                       "GenomicRanges",
+                       "Rsamtools",
+                       "GenomicAlignments",
+                       "EnsDb.Hsapiens.v75",
+                       "pasillaBamSubset"))
+
+# Genomic sequence: specify the reference build used
+library(BSgenome.Hsapiens.UCSC.hg19)
+Hsapiens = BSgenome.Hsapiens.UCSC.hg19
+Hsapiens
+
+# Gene models: specify the reference build used and the gene catalog
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+txdb = TxDb.Hsapiens.UCSC.hg19.knownGene
+txdb
+
+# Annotation maps: indicate organism and curating institution
+library(org.Hs.eg.db)
+anno =  org.Hs.eg.db
+anno
+
+
+```
+
+🧬 1. Genomic Sequence
+
+1) What it contains
+
+A Genomic Sequence object holds the complete DNA sequence of an organism’s genome — that means all chromosomes as long strings of nucleotides (A, C, G, T). These data come from a specific reference build (e.g., hg19, hg38 for human). These objects are implemented through BSgenome packages in Bioconductor.
+
+The object stores:
+	•	DNA letters for each chromosome
+	•	Sequence metadata (lengths, build version)
+
+2) What it’s used for
+
+You use genomic sequences when you need:
+	•	Actual DNA bases for a region (e.g., extracting a promoter sequence upstream of a gene)
+	•	Alignments or comparisons, when checking specific sequences
+	•	Building things like k-mers, motif searches, GC content, etc.
+
+Sequence objects are the foundation — you don’t find genes here yet, just the raw string of DNA.
+
+3) Example
+
+```{r}
+# Load a reference genome (must be installed first)
+genome <- BSgenome.Hsapiens.UCSC.hg19
+
+# Get the sequence of human chromosome 1
+chr1_seq <- genome[["chr1"]]
+head(chr1_seq)
+length(chr1_seq)   # shows the number of bases
+```
+
+This gives you access to the raw nucleotide sequence of chr1 from the hg19 build.
+
+⸻
+
+🧠 2. Gene Models
+
+1) What it contains
+
+A Gene Model object describes how the genome is organized into transcribed features — where genes, transcripts, exons, introns, coding sequences (CDS), etc. are located. These objects don’t contain the DNA letters, but coordinates and relationships among features. In Bioconductor they’re typically in TxDb packages.
+
+They include:
+	•	Positions of genes on chromosomes (start/end)
+	•	The structure of transcripts (exons, introns)
+	•	Connectivity: which exons belong to which transcript
+
+2) What it’s used for
+
+Gene models are essential for:
+	•	Counting reads overlapping genes/exons in RNA-seq
+	•	Extracting exon or transcript coordinates
+	•	Plotting gene structures
+	•	Intersecting features with experimental intervals
+
+You don’t need the actual DNA letters to define a gene model — just the coordinates and relationships.
+
+3) Example
+
+```{r}
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+
+# List all genes with coords
+genes <- genes(txdb)
+head(genes)
+
+# Get all exons
+exons <- exons(txdb)
+```
+
+This lets you explore the gene structure information (where genes and exons are located) without sequence letters.
+
+⸻
+
+🗺 3. Annotation Maps
+
+1) What it contains
+
+An Annotation Map object connects gene identifiers (IDs) to other useful biological information — names, symbols, functions, pathways, etc.
+
+These usually come in org.*.db packages. For example, org.Hs.eg.db contains mappings like:
+	•	Entrez ID → Gene symbol
+	•	Entrez ID → Chromosome
+	•	Entrez ID → GO terms
+	•	…and many other classifications
+
+This is different from gene models — it’s about information associated with genes, not their genome positions or sequences.
+
+2) What it’s used for
+
+You use annotation maps when you want to:
+	•	Convert between identifier types (e.g., Entrez → HGNC Symbol)
+	•	Add gene annotations to results (e.g., annotate DE genes with symbols/Gene Ontology)
+	•	Retrieve descriptive metadata about genes
+
+3) Example
+
+```{r}
+library(AnnotationDbi)
+
+# Get Entrez IDs mapped to gene symbols
+mapping <- select(org.Hs.eg.db,
+                  keys = c("100", "101"),
+                  columns = c("SYMBOL", "GENENAME"),
+                  keytype = "ENTREZID")
+mapping
+```
+
+Here you convert Entrez gene IDs 100 and 101 into gene symbols and names.
+
+⸻
+
+🧠 Summary Table (Quick Reference)
+
+Object | Type |	Contains |	Typical Package |	Primary Use
+Genomic Sequence |	Raw DNA letters by chromosome |	BSgenome.*	| Extract sequences, motif search
+Gene Models |	Coordinates & structure of transcripts/genes |	TxDb.* |	Feature queries, exon/intron structure
+Annotation Maps |	ID mappings and gene metadata |	org.*.db |	Gene symbol lookup, metadata annotation
+
+
+⸻
+
+🌟 Putting It Together — Simple Use Case
+
+Suppose you want to find the DNA sequence for the promoter region of a gene and annotate it with the gene symbol:
+	1.	Use annotation map to convert gene symbol → Entrez ID.
+	2.	Use gene model to find the gene’s coordinates.
+	3.	Use genomic sequence to extract the upstream DNA sequence.
+
+Each object plays a different role:
+	•	Annotation map answers “What gene is this?”
+	•	Gene model answers “Where is it in the genome?”
+	•	Genomic sequence supplies the actual DNA letters
+
+⸻
+
+Example that shows how the three annotation objects work together in a realistic Bioconductor task
+
+⸻
+
+🎯 Goal of the Example
+
+Given a gene symbol (e.g. TP53), extract its promoter DNA sequence (2,000 bp upstream of the gene).
+
+To do this, we will use all three objects:
+	1.	Annotation map → convert gene symbol to an ID
+	2.	Gene model → find where the gene is in the genome
+	3.	Genomic sequence → extract the actual DNA letters
+
+⸻
+
+🧭 Step 1: Use an Annotation Map
+
+Convert gene symbol → Entrez Gene ID
+
+Why this step?
+	•	Gene models (TxDb) are indexed by Entrez Gene IDs
+	•	Humans usually think in gene symbols like TP53
+
+So we first translate the name.
+
+Object used
+
+➡ Annotation map (org.Hs.eg.db)
+
+```{r}
+# Convert TP53 symbol to Entrez ID
+gene_info <- select(
+  org.Hs.eg.db,
+  keys = "TP53",
+  columns = "ENTREZID",
+  keytype = "SYMBOL"
+)
+
+gene_info
+```
+
+Result (conceptually)
+
+  SYMBOL ENTREZID
+1  TP53      7157
+
+✅ Now we know:
+	•	TP53 → Entrez ID 7157
+
+⸻
+
+🧬 Step 2: Use a Gene Model
+
+Find where the gene is in the genome
+
+Why this step?
+	•	DNA sequences don’t know where genes are
+	•	Gene models store chromosome, start, end, strand
+
+Object used
+
+➡ Gene model (TxDb)
+
+```{r}
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+
+# Get genomic coordinates of the gene
+gene_coords <- genes(txdb)[gene_info$ENTREZID]
+
+gene_coords
+```
+
+Result (conceptually)
+
+GRanges object with 1 range
+seqnames: chr17
+ranges:   7565097-7590856
+strand:   -
+
+This tells us:
+	•	Gene is on chromosome 17
+	•	From base 7,565,097 to 7,590,856
+	•	On the negative strand
+
+⸻
+
+🧠 Important Biology Note
+
+Promoters depend on strand direction:
+
+Strand	Promoter location
++	Upstream = lower coordinates
+-	Upstream = higher coordinates
+
+TP53 is on the negative strand, so its promoter is AFTER the gene, not before.
+
+⸻
+
+✂️ Step 3: Define the Promoter Region
+
+Let’s define:
+
+2,000 bp upstream of the transcription start site
+
+```{r}
+library(GenomicRanges)
+
+promoter_region <- promoters(
+  gene_coords,
+  upstream = 2000,
+  downstream = 0
+)
+
+promoter_region
+```
+
+Now we have:
+	•	Correct chromosome
+	•	Correct strand-aware promoter coordinates
+
+⸻
+
+🧪 Step 4: Use the Genomic Sequence
+
+Extract the DNA letters
+
+Why this step?
+	•	Gene models only give coordinates
+	•	We now want the actual A/C/G/T sequence
+
+Object used
+
+➡ Genomic sequence (BSgenome)
+
+```{r}
+genome <- BSgenome.Hsapiens.UCSC.hg19
+
+# Extract promoter DNA sequence
+promoter_seq <- getSeq(genome, promoter_region)
+
+promoter_seq
+
+```
+
+Result
+
+You now have a DNAStringSet like:
+
+DNAStringSet of length 1
+width: 2000
+seq: ATGCGTACG...
+
+🎉 This is the real promoter DNA sequence of TP53
+
+⸻
+
+🔁 How the Three Objects Worked Together
+
+Let’s connect everything clearly:
+
+Step	Object Type	Question it answers
+1	Annotation Map	“What ID corresponds to TP53?”
+2	Gene Model	“Where is this gene in the genome?”
+3	Genomic Sequence	“What are the DNA letters there?”
+
+
+⸻
+
+🧠 Mental Model (Very Important for Exams & Understanding)
+
+Think of it like this:
+	•	🗺 Annotation map = dictionary
+“What does this gene ID mean?”
+	•	📐 Gene model = blueprint
+“Where are genes and exons located?”
+	•	🧬 Genomic sequence = raw material
+“What is the DNA sequence?”
+
+None of them replaces the others — they are complementary.
+
+⸻
+
+✅ Final Take-Home Message
+
+You cannot do real genomic analysis using only one of these objects.
+
+Biological questions almost always require:
+	•	IDs → annotation maps
+	•	coordinates → gene models
+	•	DNA letters → genomic sequences
+
+⸻
+
+# RNA-seq read counting
+
+Perfect — RNA-seq read counting is the classic place where gene models really matter, so this is an excellent next step.
+
+I’ll walk you through this conceptually first, then step-by-step in Bioconductor, and I’ll keep everything student-friendly.
+
+⸻
+
+🎯 Goal of RNA-seq Read Counting
+
+Given aligned RNA-seq reads, count how many reads overlap each gene (or exon).
+
+This produces a count matrix:
+	•	rows = genes
+	•	columns = samples
+
+This matrix is the input for differential expression tools like DESeq2 or edgeR.
+
+⸻
+
+🧠 Big Picture: What Are We Counting?
+
+RNA-seq workflow (simplified):
+
+** RNA → cDNA → sequencing → reads → align to genome → count reads per gene **
+
+After alignment, each read has:
+	•	a chromosome
+	•	start & end position
+	•	strand (sometimes)
+
+Now the question is:
+
+Which gene does each read belong to?
+
+To answer that, we need gene models.
+
+⸻
+
+🧩 Objects Used in Read Counting
+
+Object |	Role
+Aligned reads (BAM) |	Experimental data
+Gene model (TxDb) |	Defines gene/exon locations
+Annotation map |	Makes gene IDs human-readable
+
+⚠️ Genomic sequence is NOT needed for counting.
+
+⸻
+
+🧬 Step 1: Aligned RNA-seq Reads
+
+Reads are stored in a BAM file after alignment (e.g. HISAT2, STAR).
+
+Conceptually, each read looks like this:
+
+chr17   7565200   7565350   strand = -
+
+In Bioconductor, BAM files are handled as GAlignments objects.
+
+```{r}
+library(Rsamtools)
+library(GenomicAlignments)
+
+library(pasillaBamSubset)
+filename <- untreated1_chr4()
+bamfile <- BamFile(untreated1_chr4())
+
+```
+
+
+⸻
+
+🧠 Step 2: Choose What You Want to Count
+
+You must decide what biological unit you are counting:
+
+Counting unit:	Question
+Genes:	How active is each gene?
+Exons:	Which parts of genes are used?
+Transcripts:	Which isoforms are expressed?
+
+Most standard RNA-seq analyses count genes.
+
+⸻
+
+🧬 Step 3: Get Gene or Exon Definitions (Gene Models)
+
+Object used
+
+➡ Gene model (TxDb)
+
+```{r}
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+```
+
+Option A: Count at the gene level
+```{r}
+genes <- genes(txdb)
+```
+
+Option B: Count at the exon level (most common approach internally)
+```{r}
+exons <- exonsBy(txdb, by = "gene")
+```
+
+👉 Why exon-based counting is common
+Because reads should overlap exons, not introns.
+
+⸻
+
+🧮 Step 4: Count Reads Overlapping Features
+
+This is where the actual counting happens.
+
+Function used
+
+➡ summarizeOverlaps()
+
+What it does (conceptually)
+
+For each read:
+	1.	Check which exon(s) it overlaps
+	2.	Assign it to a gene
+	3.	Increment that gene’s count
+
+⸻
+
+🔢 Example: Counting Reads Per Gene
+
+```{r}
+counts <- summarizeOverlaps(
+  features = exons,
+  reads = bamfile,
+  mode = "Union",
+  singleEnd = TRUE,
+  ignore.strand = FALSE
+)
+
+counts
+```
+
+What each argument means
+
+Argument|  	Meaning
+features|  	Exons grouped by gene
+reads|	  BAM file with aligned reads
+mode="Union"|  	Count read if it overlaps any exon
+singleEnd	TRUE|  if reads are single-end
+ignore.strand	FALSE|   for strand-specific RNA-seq
+
+
+⸻
+
+🧾 Step 5: The Output Object
+
+The result is a SummarizedExperiment object.
+
+counts
+
+Internally, it contains:
+
+```{r}
+assay(counts)    # count matrix
+rowRanges(counts) # gene coordinates
+colData(counts)  # sample metadata
+```
+
+Example count matrix:
+
+Gene (Entrez ID)	Sample1
+7157	1234
+1956	876
+4609	54
+
+
+⸻
+
+🏷 Step 6: Add Gene Symbols (Annotation Maps)
+
+The counts use Entrez IDs, which aren’t very readable.
+
+Object used
+
+➡ Annotation map
+
+```{r}
+gene_ids <- rownames(assay(counts))
+
+annotations <- select(
+  org.Hs.eg.db,
+  keys = gene_ids,
+  columns = "SYMBOL",
+  keytype = "ENTREZID"
+)
+```
+
+
+Now you can label your results with gene symbols.
+
+⸻
+
+🧠 What About Reads Overlapping Multiple Genes?
+
+This is important conceptually.
+
+Possible cases:
+	1.	Read overlaps one gene → counted
+	2.	Read overlaps multiple genes → depends on mode
+	3.	Read overlaps no gene → discarded
+
+Common modes:
+
+Mode:	Behavior
+Union:	Count if overlaps exactly one gene
+IntersectionStrict:	Must fully fall within
+IntersectionNotEmpty:	Partial overlaps allowed
+
+Most pipelines use Union.
+
+⸻
+
+🧠 Key Concept Must Understand
+
+RNA-seq read counting is NOT about sequences — it is about coordinates.
+
+Reads are rectangles on the genome.
+Genes/exons are rectangles on the genome.
+
+Counting = overlap problem.
+
+⸻
+
+🔁 Summary Flow
+
+BAM reads
+   ↓
+Overlap with exon coordinates (TxDb)
+   ↓
+Group by gene
+   ↓
+Count reads
+   ↓
+Annotate gene IDs
+
+
+⸻
+
+📌 Common Mistakes (Very Important)
+
+❌ Confusing gene models with annotation maps
+❌ Forgetting strand information
+❌ Thinking sequences are needed for counting
+❌ Counting intronic reads for mature mRNA
+
+⸻
+
+✅ Final Take-Home Message
+	•	Gene models define what counts as a gene
+	•	Reads are counted by genomic overlap
+	•	Annotation maps only label results
+	•	Sequences are irrelevant for counting
+
+⸻
+
+Walk through paired-end RNA-seq
+
+
+Paired-end RNA-seq is conceptually very important. I’ll explain it from intuition → data structure → counting → common pitfalls, keeping everything concrete.
+
+⸻
+
+🎯 What Is Paired-End RNA-seq?
+
+Each RNA fragment is sequenced from both ends, producing two reads:
+
+	•	Read 1 (R1)
+	•	Read 2 (R2)
+
+These two reads come from the same original RNA fragment.
+
+RNA fragment
+|======================|
+|---- R1 ---->  <---- R2 ----|
+
+
+⸻
+
+🧠 Why Use Paired-End Instead of Single-End?
+
+Paired-end sequencing:
+	•	Improves mapping accuracy
+	•	Helps resolve repetitive regions
+	•	Gives information about fragment length
+	•	Improves exon–exon junction detection
+
+But it also introduces extra rules during counting.
+
+⸻
+
+🧬 How Paired-End Reads Are Stored
+
+After alignment, paired-end reads are stored in a BAM file, but:
+	•	Each fragment → two alignment records
+	•	They share the same read name
+	•	They have a known orientation and distance
+
+Example (conceptual):
+
+readA/1  chr1  100–150
+readA/2  chr1  300–350
+
+
+⸻
+
+🧩 Key Concept (CRITICAL)
+
+In RNA-seq counting, we count FRAGMENTS, not READS.
+
+	•	Single-end: 1 read = 1 fragment
+	•	Paired-end: 2 reads = 1 fragment
+
+If you count reads instead of fragments,
+➡️ you double-count expression ❌
+
+⸻
+
+🧬 Objects Used (Same as Before)
+
+Object:	Role
+BAM file:	Aligned paired-end reads
+TxDb:	Gene/exon coordinates
+Annotation map:	Gene labels
+
+Still no genomic sequence needed.
+
+⸻
+
+🧭 Step 1: Paired-End BAM File
+
+Your BAM file contains paired reads, typically aligned with STAR or HISAT2.
+
+We tell Bioconductor:
+
+singleEnd = FALSE
+
+This is the key difference from single-end counting.
+
+⸻
+
+🧠 Step 2: Use Exons Grouped by Gene
+
+Same as before:
+```{r}
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+
+exons <- exonsBy(txdb, by = "gene")
+```
+
+Why exon-based?
+	•	Mature mRNA = exons only
+	•	Avoid intronic noise
+
+⸻
+
+🧮 Step 3: Count Paired-End Fragments
+
+Function used
+
+➡ summarizeOverlaps()
+```{r}
+# counts <- summarizeOverlaps(
+#   features = exons,
+#   reads = "sample_paired.bam",
+#   mode = "Union",
+#   singleEnd = FALSE,   # ← critical
+#   ignore.strand = FALSE,
+#   fragments = TRUE
+# )
+```
+
+⸻
+
+🧾 What Each Key Argument Means (Paired-End)
+
+Argument|	Why it matters
+singleEnd = FALSE|	Tells R reads come in pairs
+fragments = TRUE|	Count fragment once, not twice
+mode = "Union"|	Assign fragment to gene
+ignore.strand|	Depends on library prep
+
+📌 fragments = TRUE is essential
+Without it → double counting ❌
+
+⸻
+
+🧠 How Fragment Counting Works (Conceptually)
+
+For each pair of reads:
+	1.	Combine R1 and R2 into one fragment
+	2.	Determine the genomic span of the fragment
+	3.	Check which exons it overlaps
+	4.	Assign fragment to a gene
+	5.	Count once
+
+⸻
+
+📐 Example Fragment Overlap
+
+Gene A exons:  |====|    |====|
+Fragment:        |----------|
+
+✔ Fragment overlaps exons → counted
+
+Fragment: |---------------------|
+Gene A exons:        |====|
+
+✔ Partial overlap → counted (Union mode)
+
+⸻
+
+🧠 Strand-Specific Paired-End RNA-seq
+
+Some RNA-seq protocols preserve strand information.
+
+Protocol	ignore.strand
+Unstranded	TRUE
+Stranded (common)	FALSE
+
+⚠️ Wrong strand setting = wrong counts
+
+⸻
+
+⚠️ Special Paired-End Issues Students Must Know
+
+1️⃣ Mates mapping to different genes
+
+Fragment overlaps two genes → usually discarded in Union mode.
+
+2️⃣ One mate maps, the other doesn’t
+
+Usually discarded (depends on settings).
+
+3️⃣ Discordant pairs
+
+Pairs mapping too far apart or on different chromosomes → often ignored.
+
+⸻
+
+🧾 Output Is Still the Same
+
+assay(counts)     # count matrix
+rowRanges(counts) # gene coordinates
+
+The only difference:
+
+Counts represent fragments, not reads
+
+⸻
+
+🧠 Single-End vs Paired-End
+
+Feature:	Single-End	Paired-End
+Reads per fragment:	1	2
+Counting unit:	Read	Fragment
+singleEnd:	TRUE	FALSE
+Risk of double counting:	Low	High (if wrong)
+Mapping accuracy:	Lower	Higher
+
+In paired-end RNA-seq, two reads originate from one RNA fragment, so expression is measured by counting fragments, not individual reads.
+
+⸻
+
+✅ Final Take-Home Message
+	•	Paired-end RNA-seq counts fragments
+	•	Both mates define one observation
+	•	Gene models define valid overlaps
+	•	Annotation maps label results
+
+⸻
+
+### Tips
+```{r}
+# GSEA | MSigDB https://share.google/sPWJRIw0TZsOk8JvO
+
+# Cancer field: hallmark 
+# metabolic: kegg
+# cell biology: GO
+
+# https://biit.cs.ut.ee/gprofiler/gost
+# https://maayanlab.cloud/Enrichr/
+```
+
+## When to use select()?
+
+select() works on org.Hs.eg.db and EnsDb objects — but not on BSgenome and (in practice) not on TxDb.
+
+Below is the precise breakdown and why.
+
+⸻
+
+1️⃣ org.Hs.eg.db → ✅ YES (this is the classic use)
+
+org.*.eg.db packages are pure annotation maps and are exactly what
+AnnotationDbi::select() was designed for.
+```{r}
+select(
+  org.Hs.eg.db,
+  keys = c("7157"),          # TP53 Entrez ID
+  keytype = "ENTREZID",
+  columns = c("SYMBOL", "ENSEMBL", "GENENAME")
+)
+```
+
+✔ ID ↔ ID mapping
+✔ gene-centric annotation
+❌ no genomic ranges
+
+⸻
+
+2️⃣ EnsDb.Hsapiens.v75 → ✅ YES (recommended for transcript/exon work)
+
+EnsDb objects also implement the AnnotationDbi interface, so select() works.
+```{r}
+library(EnsDb.Hsapiens.v75)
+
+select(
+  EnsDb.Hsapiens.v75,
+  keys = "TP53",
+  keytype = "SYMBOL",
+  columns = c("GENEID", "TXID", "TXBIOTYPE")
+)
+```
+
+✔ gene / transcript / exon metadata
+✔ Ensembl-aware
+✔ can be combined with genes(), transcripts(), exonsBy()
+
+⸻
+
+3️⃣ TxDb.Hsapiens.UCSC.hg19.knownGene → ⚠️ NO (don’t use select())
+
+TxDb technically inherits some AnnotationDbi methods, but:
+	•	it is range-based, not map-based
+	•	select() is not the intended API
+	•	results are incomplete and confusing
+
+❌ Do not use select() on TxDb
+
+Instead use:
+```{r}
+genes(txdb)
+transcripts(txdb)
+exons(txdb)
+cdsBy(txdb, by = "tx")
+```
+
+TxDb is for genomic structure, not ID mapping.
+
+⸻
+
+4️⃣ BSgenome.Hsapiens.UCSC.hg19 → ❌ NO (never)
+
+BSgenome stores DNA sequences only.
+```{r}
+getSeq(Hsapiens, GRanges("chr17", IRanges(7565097, 7565197)))
+
+```
+
+❌ no IDs
+❌ no annotations
+❌ select() makes no sense here
+
+⸻
+
+Summary table
+
+Object |	Purpose	| select()
+org.Hs.eg.db |	ID ↔ annotation |	✅ YES
+EnsDb.Hsapiens.v75 |	Ensembl gene models + metadata |	✅ YES
+TxDb.Hsapiens.UCSC.hg19.knownGene |	Genomic structure |	❌ NO
+BSgenome.Hsapiens.UCSC.hg19 |	DNA sequence |	❌ NO
+
+
+⸻
+
+Rule of thumb (important)
+	•	ID mapping? → org.Hs.eg.db or EnsDb
+	•	Transcript/exon/CDS structure? → TxDb or EnsDb
+	•	Sequences? → BSgenome
+	•	Never use select() on TxDb or BSgenome
+
+⸻
+
+
+

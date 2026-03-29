@@ -1,0 +1,521 @@
+---
+title: "Gene Set Analysis with explanation"
+author: "Haeun Lee"
+date: "2026-01-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<a name="genesetanalysis"></a>
+
+# Gene Set Analysis
+
+In these units we learn the statistics behind gene set analysis. Throughout the unit you should keep three important steps in mind that are all important yet can be kept separated from each other. These are
+1) The gene sets considered
+2) The statistic used to summarize each gene set. 
+3) The approach to assessing uncertainty
+
+We will cover each of these three topics in separate units. 
+
+## Preparing data and gene set database
+For this unit you will need the following library:
+
+```{r,eval=FALSE}
+BiocManager::install("GSEABase")
+```
+
+We will need these packages:
+
+```{r,message=FALSE}
+library(rafalib)
+library(GSEABase)
+```
+
+In previous sections we have used a dataset comparing males and females. 
+We will need the following package which is available from the class GitHub repo:
+
+```{r,eval=FALSE}
+library(devtools)
+install_github("genomicsclass/GSE5859Subset")
+```
+
+We constructed this data to include a batch effect, so we 
+correct for that using SVA:
+
+```{r,message=FALSE}
+library(GSE5859Subset)
+data(GSE5859Subset)
+BiocManager::install("sva")
+library(sva) # address hidden batch effects / unwanted variation in high-dimensional data (e.g. microarrays, RNA-seq)
+library(limma) # standard package for fitting linear models to gene expression data
+```
+
+## Build the design matrix for your biological variable ##
+```{r,message=FALSE}
+X = sampleInfo$group # Extracts the sample group labels from the sample metadata
+# matrix encodes the groups numerically (intercept + group effect) so regression can be done
+mod<-model.matrix(~X) # design matrix for the model “expression ~ group”
+```
+
+## Estimate hidden sources of variation (surrogate variables) ##
+```{r,message=FALSE}
+svafit <- sva(geneExpression,mod) # surrogate variable analysis
+```
+Runs surrogate variable analysis on the expression matrix.
+	•	geneExpression is usually a matrix: genes x samples
+	•	mod tells sva() what variation is “known/interesting” (group variable)
+	•	sva() estimates additional latent variables svafit$sv representing unmodeled batch effects / unwanted variation.
+
+## Fit the linear model including the surrogate variables ##
+```{r,message=FALSE}
+svaX <- model.matrix(~X+svafit$sv)
+```
+Builds a new design matrix that includes:
+	•	the group variable X (what you care about)
+	•	the surrogate variables svafit$sv (nuisance covariates you want to adjust for)
+
+So the model becomes roughly:
+expression ~ group + SV1 + SV2 + …
+
+```{r}
+lmfit <- lmFit(geneExpression,svaX) # Fits a separate linear model for each gene using limma
+```
+After this, for each gene you have:
+	•	estimated coefficients (effects)
+	•	residual degrees of freedom
+	•	residual standard deviation (sigma)
+
+
+## Manually compute a t-statistic, then p-values, then q-values ##
+```{r,message=FALSE}
+tt<-lmfit$coef[,2]*sqrt(lmfit$df.residual)/(2*lmfit$sigma)
+pval<-2*(1-pt(abs(tt),lmfit$df.residual[1]))
+qval <- p.adjust(pval,"BH")
+```
+
+Note that all we really need for this unit is score for each gene and a candidate list of differentially expressed genes. The details of how we obtain them are not relevant to the of the unit. To illustrate we will pretend we don't know a-priori the relationship between the outcome and gene expression.
+
+Let's begin by constructing a list of candidate genes with an FDR of 25%. This gives us a list of 23 genes. What biology can we learn? Given that we know that genes work together, it makes sense to study groups of genes instead of individual ones. In general, this is the idea behind _gene set analysis_. 
+
+There are various resources on the web that provide gene sets. Most of these have been curated and are composed of genes with something in common. A typical way of grouping them is by pathways (e.g. [KEGG](http://www.genome.jp/kegg/))
+or biological function (e.g. [Gene Ontology](http://www.geneontology.org/)). A great resource with many curated gene sets can be found here: 
+
+<http://www.broadinstitute.org/gsea/msigdb/index.jsp>
+ 
+In this example we will use a gene set grouping genes by sections of the chromosome. The first step is to download the database. You can download the file from here (you have to register)
+
+<http://www.broadinstitute.org/gsea/msigdb/download_file.jsp?filePath=/resources/msigdb/4.0/c1.all.v4.0.entrez.gmt>
+
+Once you download the file, you can read it in with the following command: 
+```{r}
+# Reads a GMT file containing many gene sets
+gsets <- getGmt("c1.all.v4.0.entrez.gmt") ##must provide correct path to file
+```
+
+This object has 326 gene sets. Each gene set contains the ENTREZ IDs for the genes in each gene set:
+```{r}
+length(gsets) # how many gene sets
+head(names(gsets)) # the gene set names
+gsets[["chryq11"]] # prints one set
+```
+and we can access the ENTREZ ids in the following way:
+```{r}
+head(geneIds(gsets[["chryq11"]])) # returns the member genes (ENTREZ IDs)
+```
+
+Now to apply this to our data we have to map these IDS to Affymetrix IDs. We will write a simple function that takes a Expression Set and maps the probe IDs to corresponding ENTREZ IDs.
+
+```{r}
+BiocManager::install("hgfocus.db")
+library("hgfocus.db")
+mapGMT2Affy <- function(object,gsets){
+  ann<-annotation(object) # Gets the annotation name stored in the ExpressionSet
+  dbname<-paste(ann,"db",sep=".") # Builds the annotation package name
+  require(dbname,character.only=TRUE) # Loads that annotation package by name
+  gns<-featureNames(object) # Gets all features (probe IDs) in your dataset
+
+  ##This call may generate warnings
+  map<-select(get(dbname), keys=gns,columns=c("ENTREZID", "PROBEID")) # Uses the annotation DB to map probe IDs → ENTREZ IDs
+  map<-split(map[,1],map[,2]) # Converts the mapping table into a lookup list (key = PROBEID, value = ENTREZID)
+  indexes<-sapply(gsets,function(ids){ # For each gene set
+    gns2<-unlist(map[geneIds(ids)]) # geneIds(ids) extracts ENTREZ IDs in that set, grab probes that map to those ENTREZ IDs
+    match(gns2,gns) # converts probe IDs into row indices in your expression matrix
+    })
+  names(indexes)<-names(gsets) # Keep gene set names
+  return(indexes) # Returns: a list where each element is the row indices of probes in that gene set
+}
+##create an Expression Set
+rownames(sampleInfo)<- colnames(geneExpression) # Align sample metadata rownames to expression colnames
+e=ExpressionSet(assay=geneExpression, # assay: expression matrix
+                phenoData=AnnotatedDataFrame(sampleInfo), # phenoData: sample metadata
+                annotation="hgfocus") # tells Bioconductor which platform annotation to use
+##can safely ignore the warning
+gsids <- mapGMT2Affy(e,gsets) # mapped gene sets in your feature index space
+```
+
+## Approaches based on association tests
+
+Now we can ask if differentially expressed genes are enriched in a given gene set. So how do we do this? The simplest approach is to apply a chi-square test for independence that we learned in a previous unit. Let's do this for one of the Y chromosome gene sets: 
+
+```{r}
+tab <- table(ingenset=1:nrow(e) %in% gsids[["chryq11"]],signif=qval<0.05)
+chisq.test(tab)$p.val
+```
+	•	ingenset: TRUE if the gene/probe is in the set chryq11.
+	•	signif: TRUE if the gene passed your FDR threshold.
+	•	table(...) makes a 2×2 contingency table.
+	•	chisq.test tests whether “being significant” is independent of “being in the gene set”.
+	•	This is the “classic enrichment by cutoff” method.
+
+Because we are comparing men to women, it is not surprising the genes on the Y chromosome are enriched for differential expression. However, with only 13 reaching significance (4 of the on Y), this method is not practical for finding other gene sets that may be biologically interesting in some way. For example, are X chromosome gene sets of interest? Note that some genes escape X inactivation and thus should have more gene expression in females. 
+
+A problem here is that an FDR of 0.25 is an arbitrary cutoff. Why not 0.05 or 0.10? Where do we draw the cutoff?
+
+```{r}
+library(rafalib)
+# QQ plot to show why hard cutoffs are awkward
+mypar(1,1)
+qs<-seq(0,1,len=length(tt)+1)-1/(2*length(tt));qs<-qs[-1]
+qqplot(qt(qs,lmfit$df.resid),tt,ylim=c(-10,10),xlab="Theoretical quantiles",ylab="Observed") ##note we leave some of the obvious ones out
+# qqplot(expected, observed) compares expected vs observed t-statistics
+abline(0,1)
+```
+
+A summary of this approach to gene set analysis is provided by 
+[Goeman and Bühlmann 2006](#foot).
+
+<a name="summaries"></a>
+
+## Gene set summary statistics
+
+Most current approaches to gene sets analysis do not divide genes into differentially and non-differentially expressed. Instead, we make use of a statistic such as the t-test. To see how this is more powerful that dichotomizing the gene list, suppose we ask the question: do some genes escape X inactivation? Instead of creating a table as we did above, instead we look at the distribution of t-statistics for the first group in the X chromosome:
+
+Visual: compare gene-set t-stat distribution vs rest
+```{r}
+ind <- gsids[["chrxp11"]]
+mypar(1,1)
+plot(density(tt[-ind]),xlim=c(-7,7),main="",xlab="t-stat",sub="",lwd=4)
+# tt[-ind]: t-stats for genes not in the set.
+# density(...): smooth distribution estimate.
+# -> plot(...): background distribution (not in set).
+lines(density(tt[ind],bw=.7),col=2,lty=2,lwd=4) # lines(...): overlay distribution for genes in the set (dashed red)
+rug(tt[ind],col=2) # rug(...): tick marks showing individual gene t-stats in the set
+```
+
+Note that the gene set distribution shifts a bit to the left providing evidence that the distribution of the t-statistics in this gene set is different from the distribution for all genes. So how do we quantify this observation? How do we assess uncertainty?
+
+The first published approach to performing gene set analysis [Virtaneva 2001](#foot) used the Wilcoxon Mann-Whitney tests discussed in a previous unit. The basic idea was to test if the difference between cases and controls was generally bigger in a given gene set compared to the rest of the genes. The Wilcoxon compares the ranks in the gene sets are generally above the median. 
+
+Here we compute the Wilcoxon test for each gene set. We then standardize the Wilcoxon statistic to have mean 0 and standard deviation 1. Note that the central limit theorem tell us that if the gene sets are large enough and the effect size for each gene are independent of each other then these statistics will follow a normal distribution. 
+
+```{r}
+es <- lmfit$coef[,2] # es <- lmfit$coef[,2]: the estimated effect size (difference between groups) per gene
+wilcox <- t(sapply(gsids,function(i){ # For each gene set i
+  if(length(i)>2){ # If it has >2 genes
+  tmp<- wilcox.test(es[i],es[-i]) # compares effect sizes inside set vs outside set using ranks (robust)
+  n1<-length(i);n2<-length(es)-n1 # sizes of the two groups
+  z <- (tmp$stat -n1*n2/2) / sqrt(n1*n2*(n1+n2+1)/12) # converts the Wilcoxon statistic to an approximate z-score so gene sets are comparable
+  return(c(z,tmp$p.value)) # Return c(z, pvalue)
+  } else return(rep(NA,2))
+  })) # t(...): transposes so results are in a nice matrix shape
+
+# QQ-plot z-scores
+# The highlighted chromosomes should stand out if they’re enriched
+mypar(1,1)
+cols <- rep(1,nrow(wilcox))
+cols[grep("chrx",rownames(wilcox))]<-2
+cols[grep("chry",rownames(wilcox))]<-3
+qqnorm(wilcox[,1],col=cols,cex=ifelse(cols==1,1,2),pch=16) # qqnorm checks if the z-scores look normal-ish under the null
+qqline(wilcox[,1])
+legend("topleft",c("Autosome","chrX","chrY"),pch=16,col=1:3,box.lwd=0)
+```
+
+Note that the top ten does not show the X and Y chromosomes as highly expressed as we expected. The logic for using a rank based (robust) test was that we do not want one or two very highly expressed genes to dominate the gene set analysis.  However, although low rank based tests are very useful at protecting us from false positive they come at the cost of low sensitivity (power). Below we consider less robust, yet generally more powerful approaches.
+
+If we are interested in gene sets with distributions that shift to the left (generally more under expressed genes) or the right (generally more over expressed genes) then the simplest test we can construct simply compares the average between the two groups. A very simple summary we can construct to test for mean shifts is to average the t-statistic in gene set <http://www.ncbi.nlm.nih.gov/pubmed/?term=20048385>. Basically, let G be the index of genes in the gene sets and define:
+
+$$
+\bar{t}=\frac{1}{N} \sum_{i \in G} t_i
+$$
+
+Note that under the null hypothesis that the genes in the gene set are not differentially expressed, then these $t$ have mean 0. If the t-statistics are independent of each other (later we will learn approaches that avoid this assumption), then $\sqrt{N} \bar{t}$ has standard deviation 1 and is approximately normal:
+
+$$
+\sqrt{N} \bar{t} \sim N(0,1)
+$$
+
+Here is a qq-plot of these summaries: 
+```{r}
+# Mean-shift summary: average t-stat in each gene set
+# Again QQ-plot: see which sets are extreme
+avgt <- sapply(gsids,function(i) sqrt(length(i))*mean(tt[i])) # For each gene set i
+# mean(tt[i]): average t-statistic in the set
+# multiply by sqrt(length(i)): scaling so that (under independence) the statistic has comparable variance across different set sizes
+qqnorm(avgt,col=cols,cex=ifelse(cols==1,1,2),pch=16)
+qqline(avgt)
+legend("topleft",c("Autosome","chrX","chrY"),pch=16,col=1:3,box.lwd=0)
+avgt[order(-abs(avgt))[1:10]] # abs(avgt): most extreme in either direction (up or down)
+# top 10 gene sets
+```
+
+Several methods are based on summaries designed to test shifts in means: for example [Tian et al 2005](http://www.ncbi.nlm.nih.gov/pubmed/16174746) , [SAFE](http://www.ncbi.nlm.nih.gov/pubmed/15647293), [ROAST](http://www.ncbi.nlm.nih.gov/pubmed/?term=20610611), [CAMERA](http://www.ncbi.nlm.nih.gov/pubmed/22638577). 
+
+Note that we can construct other scores to test other alternative hypothesis. For example, we can test for [changes in variances](http://www.ncbi.nlm.nih.gov/pubmed/?term=20048385) and general changes in distribution [[1](http://www.ncbi.nlm.nih.gov/pubmed/12808457)], [[2](http://www.ncbi.nlm.nih.gov/pubmed/16199517)].
+
+<a name="testing"></a>
+
+## Hypothesis testing for gene sets
+
+The normal approximation stated above for $\sqrt{N} \bar{t}$ is that the t-statistics are independent and identically distributed. For example, the second equality here: 
+
+$$
+Var(\bar{t})= \frac{1}{N^2} \mbox{var}(t_1 + \dots + t_N) = \frac{1}{N^2}(\mbox{var}(t_1)+\dots+\mbox{var}(t_N)) = \frac{1}{N}
+$$
+
+assumes independence. However, even under the null we may expect gene sets to correlate. To see this we can take the average of all pairwise correlations in each gene set and see that they are not always 0:
+
+Hypothesis testing for gene sets: correlation check
+```{r}
+# 1) Get gene set sizes and sample indices
+N <- sapply(gsids,length) # gsids is a list: each element is a gene set containing row indices of genes/probes
+# sapply(..., length) gives the size of each gene set (how many genes it contains)
+# Result: N is a numeric vector like c(chr5q23=80, chr16q24=55, ...)
+
+# X is the group label per sample (e.g., 0 = females, 1 = males in this dataset)
+ind1<-which(X==0) # ind1 = column indices for samples in group 0
+ind2<-which(X==1) # ind2 = column indices for samples in group 1
+
+# 2) Compute within-gene-set correlations (separately in each group)
+corrs <- t(sapply(gsids,function(ind){ # sapply(gsids, function(ind){ ... }) loops over gene sets
+  if(length(ind)>=2){ # ind is the vector of gene indices for one gene set, can’t compute correlations if there’s only 0 or 1 gene, so skip tiny sets
+    cc1<-cor(t(geneExpression[ind,ind1])) # within group 0 samples
+    cc2<-cor(t(geneExpression[ind,ind2])) # within group 1 samples
+    # geneExpression[ind, ind1] = expression matrix for
+      # rows = genes in the set
+      # cols = samples in group 0 or 1
+    # t(...) flips it so rows are samples, cols are genes
+    # cor(...) then computes gene–gene correlation within that group
+      # a square matrix (#genes × #genes) where entry (i,j) is correlation between gene i and gene j.
+  return(c(median(cc1[lower.tri(cc1)]), median(cc2[lower.tri(cc2)]))) # Returns a 2-number vector: median within-set correlation in group
+    # lower.tri(cc1) selects the lower triangle of the correlation matrix (all unique gene–gene pairs, excluding duplicates and the diagonal)
+    # Taking the median gives one robust “typical correlation” value for that gene set in group 0
+  } else return(c(NA,NA))
+}))
+# Transposes so you end up with a matrix corrs with:
+  # one row per gene set
+	#	two columns (group0 correlation, group1 correlation)
+
+# 3) Plot correlations (for gene sets big enough)
+mypar(1,1)
+plot(corrs[N>10,],xlim=c(-1,1),ylim=c(-1,1),xlab="Correlation within females",ylab="Correlation within males")
+# corrs[N>10,]: only gene sets with more than 10 genes (small sets give noisy correlation estimates)
+# Scatter plot: each point is a gene set.
+  # x-axis = within-set correlation in group 0 (“females” in the label)
+  # y-axis = within-set correlation in group 1 (“males”)
+abline(h=0,v=0,lty=2)
+# it visually proves “genes in a gene set are not independent.”
+# each dot = each gene set
+```
+
+Note that in the case that the test statistics for the genes in a gene set have correlation $\rho$, the variance of the average t-statistics will be:
+
+$$
+\begin{eqnarray}
+Var(\bar{t}) &=& \frac{1}{N^2} \mbox{var}( (1 \dots 1) (t_1 \dots
+t_N)' ) \\
+&=& \frac{1}{N^2}(1 \dots 1)
+\begin{pmatrix}
+1 & \rho & \dots & \rho & \rho \\
+\rho & 1 & \rho & \dots  & \rho \\
+\dots & \dots & \dots & \dots & \dots \\
+\rho &  \rho & \dots & \rho & 1 \\
+\end{pmatrix}
+(1 \dots 1) ' \\
+&=& \frac{1}{N^2}\{N + (N-1) N \rho \} \\
+&=& \frac{1}{N}\{1 + (N-1) \rho \} \\
+\end{eqnarray}
+$$
+
+Note that when $\rho$ is positive, the variance is inflated by $\{1 + (N-1) \rho \}$. Although in general we don't expect all the $\rho$ to be the same within a gene set, a correction factor can still be computed for each gene set that depends on the average $\rho$ in the gene set. The formula can been seen on page 295 [here] (http://dx.doi.org/10.1214/07-AOAS146). The formula for the correction for the Wald statistic is also included. 
+
+These correction factor can be used to adapt the simple summary statistics described above. In fact, several methods have been published that are based on the simple mean shift approach but take correlation into account to develop summary statistics and statistical inference based on asymptotic approximations [ROAST](http://www.ncbi.nlm.nih.gov/pubmed/?term=20610611), [CAMERA](http://www.ncbi.nlm.nih.gov/pubmed/22638577). In the computer labs we will demonstrate one of these pieces of software. For simplicity, here we create approximation based on $\sqrt{N} \bar{t}$ and use the correction factor. Here compare the original $\sqrt{N} \bar{t}$ to the corrected version:
+
+$$
+\frac{\sqrt{N}}{\sqrt{1+(N-1)\bar{r}}}\bar{t}
+$$
+
+In the plot below we notice that this correction attenuates (brings values closer to 0) the scores. Note in particular, the third highest value is now quite close to 0 and is no longer significant (see arrow).
+
+Correction factor for inflated variance due to correlation
+
+This part says: if genes are correlated, then the gene-set “average t-statistic” has bigger variance than you’d expect under independence. So you shrink the gene-set z-scores back down.
+```{r}
+# 4) Average correlation per gene set, build correction factor
+avgcorrs <- rowMeans(corrs) # Takes the average of the two medians (group0 and group1) → one “typical correlation” per gene set
+cf <- (1+(N-1)*avgcorrs) # cf = “correlation inflation factor”.
+# Intuition:
+  # If avg correlation ≈ 0 → cf ≈ 1 (no inflation)
+	# If avg correlation > 0 → cf > 1 (variance inflated)
+cf[cf<1] <- 1 ## we ignore negative correlations
+# If estimated correlation is negative, cf could drop below 1.
+# They choose to not let the correction increase significance (so they clamp it at 1).
+
+# 5) Apply correction to the gene-set summary statistic
+# Earlier they had: avgt <- sapply(gsids, function(i) sqrt(length(i)) * mean(tt[i]))
+correctedavgt <- avgt/sqrt(cf)
+# Divide by sqrt(cf) to reduce the z-score magnitude when correlation inflates variance.
+#	Net effect: gene sets with high within-correlation get pulled closer to 0.
+
+# 6) Compute parametric p-values (with and without correction)
+parampvaliid <- 2*pnorm(-abs(avgt))
+parampval<- 2*pnorm(-abs(correctedavgt))
+# pnorm is the normal CDF.
+#	This assumes these z-like scores are approximately Normal(0,1) under the null.
+#	Two-sided p-values:
+  #	Without correction (parampvaliid) = assumes i.i.d. genes
+  #	With correction (parampval) = adjusts for correlation.
+
+# 7) Plot original vs corrected and point at “third highest” gene set
+plot(avgt,correctedavgt,bg=cols,pch=21,xlab="Original",ylab="With correction factor",xlim=c(-7,20),ylim=c(-7,20),cex=1.5)
+# Scatter plot of each gene set:
+  #	x = original score
+  #	y = corrected score
+abline(0,1)
+abline(h=0,v=0,lty=2)
+thirdhighest <- order(-avgt)[3]
+# Sort gene sets by decreasing avgt and pick the 3rd one (index).
+  #	“looked significant” but isn’t after correction
+arrows(avgt[thirdhighest]+3,correctedavgt[thirdhighest],x1=avgt[thirdhighest]+0.5,lwd=2)
+```
+
+Note that the highlighted gene set has relatively high correlation and size, which makes the correction factor large.
+```{r}
+# 8) Show why that gene set got heavily corrected
+avgcorrs[thirdhighest] # its typical within-set correlation
+length(gsids[[thirdhighest]]) # its size
+cf[thirdhighest] # its correction factor
+
+# Even a small positive correlation (like ~0.03) can matter a lot when the set is big (e.g., ~76 genes), making cf noticeably > 1.
+```
+
+In this unit we have used the average t-statistic as a simple example of a summary statistic for gene sets for which we can estimate a null-hypothesis. We demonstrated how that a correction factor is needed when the genes in the gene set are not independent. Note that we used the average t-statistic as a simple illustration and that for a more rigorous treatment implementing the testing-for-mean-shifts approach you can see [SAFE](http://www.ncbi.nlm.nih.gov/pubmed/15647293), [ROAST](http://www.ncbi.nlm.nih.gov/pubmed/?term=20610611), [CAMERA](http://www.ncbi.nlm.nih.gov/pubmed/22638577).
+
+Even after adjusting the average t-statistic with the inflation factor, the null distribution may not hold. For example, the original sample size and gene set size may be too small for the assumption that the average t-statistics are normal. In the next unit we demonstrate how we can use permutations to estimate the null distribution without parametric assumptions.
+
+<a name="permutations"></a>
+
+## Permutations 
+We build a “world where there is no real group effect” by shuffling the sample labels, then see how extreme our real gene-set score is compared to what we’d get by chance.
+
+When outcome of interest permits it and enough samples and are available an alternative to parametric tests is to perform gene set specific permutation test. This approach is implemented in several methods [[1](http://www.ncbi.nlm.nih.gov/pubmed/16199517)], [[2](http://www.ncbi.nlm.nih.gov/pubmed/16174746)]. For most enrichment scores one can create null distributions using permutations. For example, here we perform a permutation test for the simple average t-statistic summary:
+
+```{r, cache=TRUE}
+library(matrixStats)
+set.seed(1) # Make the permutation test reproducible
+# Choose how many permutations
+B <- 400 ##takes a few minutes
+# B is the number of shuffles/permutations.
+#	More permutations = more accurate p-values, but slower.
+#	With 400 permutations, the smallest possible nonzero p-value you can reliably see is about 1/400 = 0.0025.
+
+# Generate a null distribution for every gene set
+null <- sapply(1:B,function(b){
+  # Run the enclosed code B times.
+	#	Each run creates one “null” version of the gene-set scores.
+	#	Output null becomes a matrix:
+	  #	rows = gene sets
+	  #	columns = permutation runs
+ nullX<- sample(X) # Shuffle group labels
+ # X is the real group label vector (e.g., male/female).
+ # sample(X) randomly permutes it.
+ # This breaks any real association between group and expression while keeping:
+  # same number of samples per group
+  # same expression data 
+ nullsvaX<-model.matrix(~nullX+svafit$sv) ##note that we are not recomupting the surrogate values.
+ # Rebuild the design matrix using shuffled labels (keep SVA variables fixed)
+  # Constructs a design matrix like before, but replacing X with nullX.
+	#	Still includes svafit$sv (surrogate variables) to adjust for batch/unwanted variation.
+	#	Important note from the page: they do not recompute SVA under each shuffle (that would be expensive and is a simplification).
+ nulllmfit <- lmFit(geneExpression,nullsvaX) # Fit gene-wise models under the null
+ # Fits the limma linear model for each gene using the shuffled design.
+ # Under the null, the “group effect” is purely random.
+ nulltt<-nulllmfit$coef[,2]*sqrt(nulllmfit$df.residual)/(2*nulllmfit$sigma) # Compute gene-wise t-statistics under the null
+ # Same t-statistic calculation as before, but now it’s for the shuffled group.
+ # Result: one null t-stat per gene. 
+ nullavgt <- sapply(gsids,function(i) sqrt(length(i))*mean(nulltt[i])) # Summarize to gene-set scores under the null
+ # For each gene set i:
+	# take the mean of nulltt inside the set
+	# multiply by sqrt(size) (same scaling as the earlier summary)
+ # This produces one null score per gene set for this permutation. 
+ return(nullavgt) # Return that vector (one value per gene set)
+ # Returns the vector of null gene-set scores for this permutation.
+ # sapply(1:B, ...) stacks these vectors into the null matrix.
+})
+
+permavgt <- avgt/rowSds(null) # Convert observed gene-set score into a permutation-based z-score
+#	avgt is your real observed gene-set score from earlier (based on real labels).
+# rowSds(null) computes, for each gene set, the SD of its null scores across permutations.
+# Dividing gives a standardized score:
+ # big magnitude = far from what random shuffling typically produces
+# This is like a z-score, but the SD is learned from permutations (no parametric assumptions). 
+
+permpval<- rowMeans(abs(avgt) < abs(null)) # Compute permutation p-values
+# For each gene set:
+ # compare abs(avgt) (observed magnitude) to abs(null) (null magnitudes across permutations)
+ # count the fraction of permutations where the null is more extreme than observed
+# That fraction is the permutation p-value. (Two-sided because of abs.)
+# (Small nuance: many people use <= and add a +1 correction to avoid zero p-values; this code uses < and can produce 0 when nothing beats the observed value in 400 permutations.)
+```
+
+In this case the results using permutations are very similar to the results using the parametric approach that uses the correction factor as can be seen in this comparison.
+
+```{r}
+# Compare parametric-corrected vs permutation scores visually
+plot(correctedavgt,permavgt,bg=cols,pch=21,xlab="Parametric z-score (with correction)",ylab="Permutation z-score",cex=1.5,ylim=c(-5,15),xlim=c(-5,15))
+# Scatter plot: each point is a gene set.
+ # x-axis = parametric z-score with correlation correction (correctedavgt)
+ # y-axis = permutation z-score (permavgt)
+abline(0,1)
+abline(h=0,v=0,lty=2)
+```
+
+We can see that the q-values are also comparable:
+
+```{r}
+# Compare q-values across approaches
+# p.adjust(..., "BH") applies Benjamini–Hochberg FDR control
+tab <- data.frame( # Builds a table of FDR-adjusted p-values (q-values) for three approaches:
+  avgt=p.adjust(signif(2*pnorm(1-abs(avgt)),2),method="BH"), # 1.	naive parametric using avgt as if it were standard normal
+  correctedavgt=p.adjust(signif(2*pnorm(1-abs(correctedavgt)),2),method="BH"), # 2.	parametric after correlation correction
+  permutations=p.adjust(permpval,method="BH")) # 3.	permutation p-values
+
+##include only gene sets with 10 or more genes in comparison
+tab<-tab[N>=10,] # Keeps only gene sets with at least 10 genes (small sets behave noisier / less stable)
+tab <- cbind(signif(tab,2),apply(tab,2,rank))
+# signif(tab,2) rounds numbers for readable printing.
+# apply(tab,2,rank) ranks gene sets within each method (rank 1 = smallest q-value).
+# cbind sticks the rounded values and ranks side-by-side.
+tab<-tab[order(tab[,1]),]
+tab <- tab[tab[,1]< 0.25,]
+tab
+#	Sort by the first column (the avgt q-values).
+#	Keep gene sets with q-value < 0.25 (just for display).
+#	Print the resulting table.
+```
+
+One limitation of the permutation test approach is that to estimate very small p-values we need many permutations. For example, to distinguish between a p-value of $10^{-5}$ and $10^{-6}$ we would need to run 1,000,000 permutations. For those interested in applying conservative multiple comparison correction (such as the Bonferonni correction), it would be necessary to run many simulations. 
+
+Another limitation is that in more complicated designs, for example an experiment with many factor and continuous covariates, deciphering how to permute is not straight forward.
+
+## Footnotes <a name="foot"></a>
+
+Virtaneva K, "Expression profiling reveals fundamental biological differences in acute myeloid leukemia with isolated trisomy 8 and normal cytogenetics." PNAS 2001
+<http://www.ncbi.nlm.nih.gov/pubmed/?term=11158605>
+
+Jelle J. Goeman and Peter Bühlmann, "Analyzing gene expression data in terms of gene sets: methodological issues" Bioinformatics 2006.
+<http://bioinformatics.oxfordjournals.org/content/23/8/980>
+
+

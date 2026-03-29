@@ -1,0 +1,88 @@
+---
+title: "Section 1: What we measure, why and how"
+author: "Haeun Lee"
+date: "2026-11-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(BiocGenerics)
+library(S4Vectors)
+library(IRanges)
+library(GenomicRanges)
+library(SummarizedExperiment)
+```
+
+## What we measure and Why
+```{r}
+# install.packages("mclust")
+
+BiocManager::install(c("genefu",
+                       "COPDSexualDimorphism",
+                       "gwascat",
+                       "hgu133a.db",
+                       "genomicsclass/tissuesGeneExpression"))
+library(genefu)
+data(sig.gene70)
+dim(sig.gene70)
+head(sig.gene70)[,1:6]
+
+library(COPDSexualDimorphism.data)
+data(lgrc.expr.meta)
+
+library(gwascat)
+data(ebicat_2020_04_30)
+ebicat_2020_04_30
+
+sort(table(ebicat_2020_04_30$CHR_ID), decreasing = TRUE)[1]
+sort(table(mcols(ebicat_2020_04_30)[,"DISEASE/TRAIT"]), decreasing=TRUE)[1]
+```
+
+
+## Verified assessment
+```{r}
+#Q4
+library(tissuesGeneExpression) 
+data(tissuesGeneExpression)
+
+mean(e["209169_at",tissue == "cerebellum"])
+mean(e["209169_at",tissue == "colon"])
+mean(e["209169_at",tissue == "endometrium"])
+mean(e["209169_at",tissue == "hippocampus"])
+mean(e["209169_at",tissue == "kidney"])
+mean(e["209169_at",tissue == "liver"])
+mean(e["209169_at",tissue == "placenta"])
+
+#Q6
+library(hgu133a.db)    # installed in section overview
+# create vector symbol with the gene symbols correponding to the probes in rownames(e)
+symbol = mapIds(hgu133a.db, keys=rownames(e), column="SYMBOL", keytype="PROBEID")
+
+symbol["209169_at"]
+
+# Q7
+sum(symbol == "H2AX", na.rm=TRUE)
+
+rownames(e)[symbol=="H2AX" & !is.na(symbol)]
+
+# Q9
+boxplot(as.numeric(e["205436_s_at",])~tissue)
+
+# Q10
+IDs = c("201884_at", "209169_at", "206269_at", "207437_at", "219832_s_at", "212827_at")
+mean(e["201884_at",tissue == "placenta"])
+mean(e["209169_at",tissue == "placenta"])
+mean(e["206269_at",tissue == "placenta"])
+mean(e["207437_at",tissue == "placenta"])
+mean(e["219832_s_at",tissue == "placenta"])
+mean(e["212827_at",tissue == "placenta"])
+
+# main = title of each boxplots
+# las = axis labels vertical
+par(mfrow=c(3,2))
+for(i in IDs){
+  boxplot(e[i,]~tissue,las=2,main=i)
+}
+```
+
