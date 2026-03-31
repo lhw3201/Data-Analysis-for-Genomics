@@ -29,5 +29,4 @@ This section explores the localization of protein-DNA interactions.
     *   **Differential Binding**: The **DiffBind** package facilitates the comparison of peak signals across different conditions or cell lines, allowing for the normalization of sequencing depth and testing for significant binding affinity changes.
     *   **Motif Finding**: Analysis often involves searching for **common DNA sequences (motifs)** within peaks, as specific proteins prefer binding to certain DNA strings.
 
----
-*Materials based on the PH525x series by Rafael Irizarry and Michael Love.*
+
