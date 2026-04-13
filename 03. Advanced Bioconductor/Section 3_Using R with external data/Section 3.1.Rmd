@@ -1,0 +1,108 @@
+---
+title: "Section 3.1: Relational databases"
+author: "Haeun Lee"
+date: "2026-04-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Relational databases
+
+```{r}
+BiocManager::install(c("airway",
+                       "DBI",
+                       "GenomicFiles",
+                       "HDF5Array",
+                       "h5vc",
+                       "microbenchmark",
+                       "rhdf5",
+                       "RSQLite"))
+```
+
+
+## Packaging and using relational databases: RSQLite
+
+```{r getpacksa,echo=FALSE,results="hide"}
+suppressPackageStartupMessages({
+suppressMessages({
+suppressWarnings({
+library(AnnotationDbi)
+library(ggbio)
+library(gwascat)
+library(GenomicRanges)
+library(ERBS)
+library(OrganismDbi)
+library(harbChIP)
+library(yeastCC)
+library(rtracklayer)
+library(Rsamtools)
+library(h5vc)
+library(rhdf5)
+library(DBI)
+})
+})
+})
+```
+
+### External data: Relational Data Base Management Systems (RDBMS)
+
+We'll look at the database underlying the GO.db annotation package.
+
+```{r lkgo}
+library(GO.db)
+```
+
+There is a file on disk containing all the annotation data.
+
+```{r lkconn}
+GO.db$conn@dbname
+```
+
+We can list the tables present in the database.  We pass the connection object to `dbListTables`.
+
+```{r lkm3}
+dbListTables( GO.db$conn )
+```
+
+Here we sample records from the table that manages terms corresponding to GO categories using a limit clause.
+
+```{r  lkl}
+dbGetQuery( GO.db$conn, "select * from go_term limit 5")
+```
+
+The `dbGetQuery` function will return a data.frame instance.
+
+## Assessment: Basics of the SQLite back end
+
+### Benchmarking SQL vs. select()
+
+We will use a benchmarking tool to compute statistics on runtimes of two approaches to extracting annotation information: direct use of SQL vs. the select interface. For interactive work there is no real need to optimize query resolution, but for designing servers such computations are very important. Be sure the microbenchmark package is installed.
+
+```{r}
+library(microbenchmark)
+library(DBI)
+m1 = microbenchmark(
+ dbGetQuery(GO.db$conn, "select term from go_term"), times=10L, unit="ms")
+m2 = microbenchmark(
+ AnnotationDbi::keys(GO.db, keytype="TERM"), times=10L, unit="ms")
+```
+
+What is the ratio of median time to acquire all terms through keys() to median time to acquire all terms via SQL?:
+
+```{r}
+median(m2$time)/median(m1$time)
+summary(m2)[,"median"]/summary(m1)[,"median"]
+```
+
+
+
+
+
+
+
+
+
+
