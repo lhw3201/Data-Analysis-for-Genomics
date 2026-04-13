@@ -1,0 +1,294 @@
+---
+title: "Section 2: knitr and literate statistical analysis and presentation"
+author: "Haeun Lee"
+date: "2026-03-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# knitr and literate statistical analysis and presentation
+
+# Package design and creation
+
+## R packages: How they are built
+
+## Installing and testing the erbsViz package
+
+We can create our own packages using `package.skeleton`.  We'll illustrate that now
+with an enhancement to the ERBS package that was created for the course.
+We'll create a new package that utilizes the peak data, defining
+a function `juxta` that allows us to compare binding peak patterns for the two cell
+types on a selected chromosome.  (I have commented out code that
+uses an alternative graphics engine, for optional exploration.)
+
+Here's a definition of `juxta`.  Add it to your R session.
+
+```{r}
+juxta = function (chrname="chr22", ...) 
+{
+    require(ERBS)
+    data(HepG2)
+    data(GM12878)
+    require(ggbio)
+    require(GenomicRanges)
+    ap1 = autoplot(HepG2[seqnames(HepG2) == chrname])
+    ap2 = autoplot(GM12878[seqnames(GM12878) == chrname])
+    tracks(HepG2 = ap1, Bcell = ap2, ...)
+}
+```
+
+Now demonstrate it as follows.
+
+```{r doj,fig=TRUE}
+library(ERBS)
+juxta("chr22", main="ESRRA binding peaks on chr22")
+```
+
+## Assessment: Creating a package
+
+### Structure of erbsViz juxta() output
+
+In the video we demonstrated the creation of a new package, erbsViz, centered around the following visualization function:
+
+```{r}
+juxta = function (chrname="chr22", ...) 
+{
+    require(ERBS)
+    data(HepG2)
+    data(GM12878)
+    require(ggbio)
+    require(GenomicRanges)  # "subset" is overused, need import detail
+    ap1 = autoplot(HepG2[seqnames(HepG2) == chrname])
+    ap2 = autoplot(GM12878[seqnames(GM12878) == chrname])
+    tracks(HepG2 = ap1, Bcell = ap2, ...)
+}
+```
+
+Once this function is added to your workspace, you can create the erbsViz package using:
+
+```{r}
+package.skeleton("erbsViz", "juxta")
+```
+
+After doing this, you get an installable package upon editing the manual pages generated so that each title field has proper content, essentially an unquoted string of descriptive prose. Install the package with:
+
+```{r}
+install.packages("erbsViz", repos=NULL, type="source")
+```
+
+Use the erbsViz package as created during the video to perform the following computation:
+
+```{r}
+library(erbsViz)
+jdemo = juxta()
+```
+
+What is the class of jdemo?
+
+```{r}
+class(jdemo)
+```
+
+### Customization elements for the Tracks display
+
+How the display might be customized:
+
+What is the name of the slot that alters the color of the label text? label.text.color
+
+```{r}
+getSlots(getClass(class(jdemo)))
+```
+
+## Creating the Sac.cer3 annotation package
+
+```{r doodb}
+library(OrganismDbi)
+gd = list( join1 = c(GO.db="GOID", org.Sc.sgd.db="GO"),
+           join2 = c(org.Sc.sgd.db="ENTREZID",
+              TxDb.Scerevisiae.UCSC.sacCer3.sgdGene="GENEID"))
+if (!file.exists("Sac.cer3")) # don't do twice...
+makeOrganismPackage(pkgname="Sac.cer3",  # simplify typing!
+  graphData=gd, organism="Saccharomyces cerevisiae",
+  version="1.0.0", maintainer="Student <ph525x@harvardx.edu>",
+  author="Student <ph525x@harvardx.edu>",
+  destDir=".",
+  license="Artistic-2.0")
+```
+
+```{r doinst}
+install.packages("Sac.cer3", repos=NULL, type="source")
+library(Sac.cer3)
+Sac.cer3
+columns(Sac.cer3)
+genes(Sac.cer3)
+```
+
+## Assessment: An OrganismDb for C. elegans
+
+### setup for a makeOrganismPackage call
+
+In the preceding video, we saw how to make an OrganismDb package for S. cerevisiae. In this problem set, you will make such a package for C. elegans. The makeOrganismPackage() function in OrganismDbi requires a list for the graphData parameter:
+
+```{r}
+library(org.Ce.eg.db)
+library(TxDb.Celegans.UCSC.ce6.ensGene)
+gd = list(join1 = c(GO.db="GOID", org.Ce.eg.db="GO"),
+                join2 = c(org.Ce.eg.db="ENTREZID",
+                          TxDb.Celegans.UCSC.ce6.ensGene="GENEID"))
+```
+
+### A query to the new Cen.ele6 package
+
+```{r}
+makeOrganismPackage("Cen.ele6", gd, "C. elegans", "1.0.0", "me <me@abc.com>", "me <me@abc.com>", ".")
+install.packages("Cen.ele6", repos=NULL, type="source")
+library(Cen.ele6)
+
+sum(seqlengths(Cen.ele6))
+```
+
+## Software build and check infrastructure
+
+## Reproducible analysis and packages assessment
+
+### Q1: Reproducible research
+
+Four studies have been published in highly esteemed research journals. Each has shared the data and analysis pipeline from the study in a different way.
+
+Which of these studies has the most reproducible analysis?
+
+- Study D. The data, software and original analysis code are publicly available and can exactly reproduce the published results.
+
+### Q2: R markdown and knitr
+
+Below is a section of R Markdown code that generates a report.
+
+
+<!-- --- -->
+<!-- title: "Final Grade Distribution" -->
+<!-- output: pdf_document -->
+<!-- --- -->
+
+<!-- ```{r, echo=FALSE} -->
+<!-- load(file="my_data.Rmd")    # contains the grades object -->
+<!-- summary(grades) -->
+<!-- ``` -->
+
+Which of these statements are true about the content of the report produced by knitting this code?
+
+- The report is a PDF document.
+- The code loading the file and computing the summary of the grades object will be run.
+- The summary of the grades object will be printed in the report.
+
+### Q3: Package creation steps
+
+In a previous assessment, we wrote a function plotGeneModel().
+
+```{r}
+plotGeneModel = function(x) {
+    # load ggbio for plotting
+    require(ggbio)
+    require(BSgenome.Hsapiens.UCSC.hg19)
+    data(genesymbol, package="biovizBase")
+    
+    # specify gene by symbol
+    gene = genesymbol[x]
+    
+    # plot gene model
+    ap1 = autoplot(Homo.sapiens, which=gene, gap.geom="chevron")
+    attr(ap1, "hasAxis") = TRUE    # add location axis
+    ap1 + xlab(seqnames(gene))    # add chromosome label
+}
+```
+
+4 steps to creating a package genemodel that contains the plotGeneModel() function?
+
+1. Define the plotGeneModel() function in your workspace
+
+2. Create a package skeleton with package.skeleton("genemodel", list="plotGeneModel")
+
+3. Navigate to the "genemodel/man" folder and edit the documentation
+
+4. Install with install.packages("genemodel", type="source", repos=NULL)
+
+### Q4: Using a new package
+
+Remove the original plotGeneModel() function from your workspace with rm(plotGeneModel). Load your new genemodel package and run x = plotGeneModel("NANOG").
+
+Which of these messages does NOT appear as a progress message in the R console while the function is running?
+
+- Parsing introns...
+
+What is the class of x?
+
+- GGbio
+
+### Q5: Organism package for mouse - Part 1
+
+Let's make an organism annotation package for mouse, Mus musculus. Install and load the following packages:
+
+```{r}
+library(GO.db)
+library(org.Mm.eg.db)    # orgDb package for Mus musculus
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)    # TxDb package for Mus musculus, mm10
+```
+
+To combine these packages, we will need to specify how the key names match across the databases. Inspect the keytypes() of GO.db, the OrgDb object, and the TxDb object to find the key names for GO IDs and ENTREZ gene IDs.
+
+Define the dbmap object specifying how the keys from these packages map to each other.
+
+```{r}
+keytypes(GO.db)
+keytypes(org.Mm.eg.db)
+keytypes(TxDb.Mmusculus.UCSC.mm10.knownGene)
+
+dbmap = list(join1 = c(GO.db="GOID", org.Mm.eg.db="GO"),
+                join2 = c(org.Mm.eg.db="ENTREZID",
+                          TxDb.Mmusculus.UCSC.mm10.knownGene="GENEID"))
+```
+
+"GOID" from GO.db matches "GO" from the OrgDb object, and "ENTREZID" from the OrgDb object matches "GENEID" from the TxDb object
+
+### Q6: Organism package for mouse - Part 2
+
+Create and install the mm10 package:
+
+```{r}
+makeOrganismPackage(pkgname="mm10",
+  graphData=dbmap, organism="Mus musculus",
+  version="1.0.0", maintainer="Student <ph525x@harvardx.edu>",
+  author="Student <ph525x@harvardx.edu>",
+  destDir=".",
+  license="Artistic-2.0")
+install.packages("mm10", repos=NULL, type="source")
+```
+
+### Q7: Organism package for mouse - Part 3
+
+Load the mm10 package that you just created and now contains the mm10 object.
+
+What is the object type of mm10?
+
+```{r}
+library("mm10")
+class(mm10)
+mm10
+length(columns(mm10))
+genes(mm10)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
